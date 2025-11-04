@@ -1,0 +1,11 @@
+{
+    "base_url": "https://www.bv-brc.org/api-bulk",
+    "workspace_url": "https://p3.theseed.org/services/Workspace",
+    "service_api_url": "https://p3.theseed.org/services/app_service",
+    "similar_genome_finder_api_url": "https://p3.theseed.org/services/minhash_service",
+    "authentication_url": "https://user.patricbrc.org/authenticate",
+    "openid_config_url": "https://dev-7.bv-brc.org",
+    "mcp_url": "127.0.0.1",
+    "port": 3000,
+    "token": ""
+}
