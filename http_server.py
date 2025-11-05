@@ -50,13 +50,13 @@ mcp = FastMCP("BVBRC Consolidated MCP Server")
 
 # Register all tools from the three modules
 print("Registering data tools...", file=sys.stderr)
-register_data_tools(mcp, base_url)
+#register_data_tools(mcp, base_url)
 
 print("Registering service tools...", file=sys.stderr)
 register_service_tools(mcp, service_api, similar_genome_finder_api, token_provider)
 
 print("Registering workspace tools...", file=sys.stderr)
-register_workspace_tools(mcp, workspace_api, token_provider)
+#register_workspace_tools(mcp, workspace_api, token_provider)
 
 # Add health check tool
 @mcp.tool()

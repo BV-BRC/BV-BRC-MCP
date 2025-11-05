@@ -18,7 +18,7 @@ from functions.service_functions import (
     start_subspecies_classification_app, start_viral_assembly_app, start_fastq_utils_app,
     start_genome_alignment_app, start_sars_genome_analysis_app, start_msa_snp_analysis_app,
     start_metacats_app, start_proteome_comparison_app, start_comparative_systems_app,
-    start_docking_app, start_similar_genome_finder_app
+    start_docking_app, start_similar_genome_finder_app, get_service_info
 )
 from typing import Any, List, Dict, Optional
 
@@ -73,7 +73,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         return start_date_app(api, token=auth_token, user_id=user_id, output_path=output_path, output_file=output_file)
 
     @mcp.tool(name="get_service_info", description="Get information about the service. Parameters: Service Name (str, required) - Name of the service to get information about. example: genome_assembly, blast, primer_design, etc.")
-    def get_service_info(token: Optional[str] = None, service_name: str = None) -> str:
+    def service_get_service_info(token: Optional[str] = None, service_name: str = None) -> str:
         # Get the appropriate token
         auth_token = token_provider.get_token(token)
         if not auth_token:
