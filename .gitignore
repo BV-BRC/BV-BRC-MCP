@@ -4,3 +4,5 @@ mcp_env
 bvbrc-python-api
 bvbrc-python-api/
 mcp_config.json
+*mcpb
+manifest.json

@@ -87,6 +87,8 @@ def generate_mcp_config():
     # Define paths
     template_path = script_dir / "mcp_example.json"
     output_path = script_dir / "mcp_config.json"
+    manifest_template_path = script_dir / "manifest_template.json"
+    manifest_output_path = script_dir / "manifest.json"
     mcp_env_path = script_dir / "mcp_env"
     stdio_server_path = script_dir / "stdio_server.py"
     config_path = script_dir / "config.json"
@@ -95,6 +97,10 @@ def generate_mcp_config():
     if not template_path.exists():
         print(f"Error: Template file not found: {template_path}")
         return 1
+    
+    # Check if manifest template exists
+    if not manifest_template_path.exists():
+        print(f"Warning: Manifest template file not found: {manifest_template_path}")
     
     # Check if mcp_env exists
     if not mcp_env_path.exists():
@@ -110,6 +116,12 @@ def generate_mcp_config():
     with open(template_path, 'r') as f:
         config = json.load(f)
     
+    # Read the manifest template if it exists
+    manifest_config = None
+    if manifest_template_path.exists():
+        with open(manifest_template_path, 'r') as f:
+            manifest_config = json.load(f)
+    
     # Replace placeholders with actual paths
     python_path = mcp_env_path / "bin" / "python3"
     
@@ -123,6 +135,7 @@ def generate_mcp_config():
     print("=" * 50)
     auth_choice = input("Would you like to authenticate and set KB_AUTH_TOKEN? (y/n): ").strip().lower()
     
+    token = None
     if auth_choice in ['y', 'yes']:
         # Load config to get authentication URL
         app_config = load_config(str(config_path))
@@ -140,17 +153,30 @@ def generate_mcp_config():
                 # Authenticate
                 token = authenticate(username, password, authentication_url)
                 if token:
-                    # Set KB_AUTH_TOKEN in the config
+                    # Set KB_AUTH_TOKEN in the mcp_config.json
                     if "env" not in config["mcpServers"]["bvbrc-mcp"]:
                         config["mcpServers"]["bvbrc-mcp"]["env"] = {}
                     config["mcpServers"]["bvbrc-mcp"]["env"]["KB_AUTH_TOKEN"] = token
-                    print(f"✓ KB_AUTH_TOKEN set in config")
+                    print(f"✓ KB_AUTH_TOKEN set in mcp_config.json")
+                    
+                    # Set KB_AUTH_TOKEN in the manifest.json if manifest template exists
+                    if manifest_config:
+                        if "server" in manifest_config and "mcp_config" in manifest_config["server"]:
+                            if "env" not in manifest_config["server"]["mcp_config"]:
+                                manifest_config["server"]["mcp_config"]["env"] = {}
+                            manifest_config["server"]["mcp_config"]["env"]["KB_AUTH_TOKEN"] = token
+                            print(f"✓ KB_AUTH_TOKEN set in manifest.json")
                 else:
                     print("Warning: Authentication failed, KB_AUTH_TOKEN not set")
     
-    # Write the output
+    # Write the mcp_config.json output
     with open(output_path, 'w') as f:
         json.dump(config, f, indent=2)
+    
+    # Write the manifest.json output if manifest template exists
+    if manifest_config:
+        with open(manifest_output_path, 'w') as f:
+            json.dump(manifest_config, f, indent=2)
     
     print("\n" + "=" * 50)
     print(f"Successfully generated {output_path}")
@@ -160,6 +186,13 @@ def generate_mcp_config():
         print(f"  KB_AUTH_TOKEN: Set ✓")
     else:
         print(f"  KB_AUTH_TOKEN: Not set")
+    
+    if manifest_config:
+        print(f"\nSuccessfully generated {manifest_output_path}")
+        if manifest_config.get("server", {}).get("mcp_config", {}).get("env", {}).get("KB_AUTH_TOKEN"):
+            print(f"  KB_AUTH_TOKEN: Set ✓")
+        else:
+            print(f"  KB_AUTH_TOKEN: Not set")
     
     return 0
 

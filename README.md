@@ -83,6 +83,34 @@ A Model Context Protocol (MCP) server for the Bacterial-Viral Bioinformatics res
 </details>
 
 <details>
+<summary><h2>Installing as a Claude Extension</h2></summary>
+
+1. Install the MCP Builder CLI:
+   ```bash
+   npm install -g @anthropic-ai/mcpb
+   ```
+
+2. Generate the MCP configuration file (if you haven't already):
+   ```bash
+   python3 generate_mcp_config.py
+   ```
+
+3. Pack the extension:
+   ```bash
+   mcpb pack
+   ```
+
+4. In Claude, Go to Settings, then Extensions
+
+5. Click Advanced settings, then Install Extension
+
+6. Select the file 'bvbrc-mcp-server.mcpb' then click Preview
+
+7. It should pull up a preview page, then click Install
+
+</details>
+
+<details>
 <summary><h2>MCP Development</h2></summary>
 
 ## Note
