@@ -1,21 +1,21 @@
-# BVBRC Consolidated MCP Server
+# BV-BRC MCP Server
 
-A unified Model Context Protocol (MCP) server:
-- **Data Tools**: Query BVBRC Solr collections for genome, feature, and other biological data
-- **Service Tools**: Submit and manage BVBRC analysis jobs (assembly, annotation, BLAST, etc.)
-- **Workspace Tools**: Manage BVBRC workspace files, folders, and groups
+A Model Context Protocol (MCP) server for the Bacterial-Viral Bioinformatics resource Center:
+- **Data Tools**: Query BV-BRC Solr collections for genome, feature, and other biological data
+- **Service Tools**: Submit and manage BV-BRC analysis jobs (assembly, annotation, BLAST, etc.)
+- **Workspace Tools**: Manage BV-BRC workspace files, folders, and groups
 
 <details>
 <summary><h2>Features</h2></summary>
 
 ### Data Tools
-- `query_collection`: Query any BVBRC Solr collection with flexible filtering
+- `query_collection`: Query any BV-BRC Solr collection with flexible filtering
 - `solr_collection_parameters`: Get schema information for collections
 - `solr_query_instructions`: Get help on query syntax
 - `solr_collections`: List all available collections
 
 ### Service Tools
-- `list_service_apps`: List all available BVBRC analysis services
+- `list_service_apps`: List all available BV-BRC analysis services
 - `get_job_details`: Query the status of submitted jobs
 - Submit jobs for various analyses:
   - Genome Assembly
@@ -185,9 +185,8 @@ bvbrc-mcp-server/
 ├── start_server.sh                  # Server startup script
 ├── stdio_server.py                  # STDIO server (for Claude Desktop, etc.)
 ├── token_provider.py                # Unified authentication token handling
-├── bvbrc-python-api/                # BVBRC Python API dependency
+├── bvbrc-python-api/                # BV-BRC Python API dependency
 │   ├── bvbrc_solr_api/              # Solr API implementation
-│   ├── bvbrc_solr_python_api.egg-info/
 │   ├── pyproject.toml
 │   └── README.md
 ├── functions/                       # Function implementation modules
@@ -196,7 +195,6 @@ bvbrc-mcp-server/
 │   ├── service_functions.py         # Service job implementations
 │   └── workspace_functions.py       # Workspace implementations
 ├── images/                          # Image assets
-│   ├── bv-brc-header-logo.png
 │   └── bvbrc_logo_base64.txt
 ├── prompts/                         # Collection schema documentation
 │   ├── antibiotics.txt
