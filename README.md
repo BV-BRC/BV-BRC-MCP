@@ -49,6 +49,12 @@ Run the installation script, which will create the virtual python environment an
 sh install.sh
 ```
 
+## Instructions for MCP configuration Setup
+
+[Claude](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp)
+
+[ChatGPT](https://docs.atlan.com/product/capabilities/atlan-ai/how-tos/chatgpt-remote-mcp)
+
 ## Local server development
 
 Generate mcp config file:
@@ -58,12 +64,6 @@ python3 generate_mcp_config.py
 Creates mcp_config.json
 
 Paste its contents into your chatbots mcp config file
-
-## Instructions for MCP configuration Setup
-
-[Claude](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp)
-
-[ChatGPT](https://docs.atlan.com/product/capabilities/atlan-ai/how-tos/chatgpt-remote-mcp)
 
 ## Remote server development
 Configure the server (for remote servers):
