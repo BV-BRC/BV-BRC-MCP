@@ -61,7 +61,7 @@ def register_data_tools(mcp: FastMCP, base_url: str):
                 "error": f"Error querying {collection}: {str(e)}"
             }, indent=2)
     
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def solr_collection_parameters(collection: str) -> str:
         """
         Get parameters for a given collection.
@@ -74,7 +74,7 @@ def register_data_tools(mcp: FastMCP, base_url: str):
         """
         return lookup_parameters(collection)
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def solr_query_instructions() -> str:
         """
         Get general query instructions for all collections.
@@ -85,7 +85,7 @@ def register_data_tools(mcp: FastMCP, base_url: str):
         print("Fetching general query instructions.")
         return query_info()
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     def solr_collections() -> str:
         """
         Get all available collections.
