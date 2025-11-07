@@ -115,7 +115,7 @@ A Model Context Protocol (MCP) server for the Bacterial-Viral Bioinformatics res
 
 2. Generate the MCP configuration file (if you haven't already):
    ```bash
-   python3 common/generate_mcp_config.py
+   python3 generate_mcp_config.py
    ```
 
 3. Pack the extension:
@@ -144,14 +144,14 @@ Local server development is recommended for working on MCP tools
 Run the installation script, which will create the virtual python environment and install a data api and remaining requirements
 ```bash
 # clone the repository and enter it
-sh install.sh
+./install.sh
 ```
 
 ## Local server development
 
 Generate mcp config file:
 ```bash
-python3 common/generate_mcp_config.py
+python3 generate_mcp_config.py
 ```
 Creates mcp_config.json
 
@@ -187,7 +187,7 @@ The `config.json` file contains:
 
 Start the HTTP server:
 ```bash
-sh start_server.sh
+./start_http_server.sh
 ```
 
 The server will start on the configured host and port (default: `127.0.0.1:12010`).
