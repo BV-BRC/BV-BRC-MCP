@@ -86,9 +86,9 @@ def generate_mcp_config():
     
     # Define paths
     template_path = script_dir / "config" / "mcp_example.json"
-    output_path = script_dir / "config" / "mcp_config.json"
+    output_path = script_dir  / "mcp_config.json"
     manifest_template_path = script_dir / "config" / "manifest_template.json"
-    manifest_output_path = script_dir / "config" / "manifest.json"
+    manifest_output_path = script_dir / "manifest.json"
     mcp_env_path = script_dir / "mcp_env"
     stdio_server_path = script_dir / "stdio_server.py"
     config_path = script_dir / "config" / "config.json"
