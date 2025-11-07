@@ -46,6 +46,10 @@ def register_data_tools(mcp: FastMCP, base_url: str):
             options["select"] = select.split(",")
         if sort:
             options["sort"] = sort
+
+        # Do query translation here.
+        if collection == "specialty_gene":
+            collection = "sp_gene"
         
         try:
             result, count = query_direct(collection, filter_str, options, _base_url)
