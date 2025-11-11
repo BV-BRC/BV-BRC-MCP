@@ -207,9 +207,9 @@ def openid_configuration(request, openid_config_url: str) -> JSONResponse:
     print("Request path:", request.url.path)
     config = {
             "issuer": openid_config_url,
-            "authorization_endpoint": f"{openid_config_url}/oauth2/authorize",
-            "token_endpoint": f"{openid_config_url}/oauth2/token",
-            "registration_endpoint": f"{openid_config_url}/oauth2/register", # 1
+            "authorization_endpoint": f"{openid_config_url}/mcp/oauth2/authorize",
+            "token_endpoint": f"{openid_config_url}/mcp/oauth2/token",
+            "registration_endpoint": f"{openid_config_url}/mcp/oauth2/register", # 1
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code"],
             "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
@@ -524,7 +524,7 @@ async def oauth2_authorize(request, authentication_url: str):
             
             <div id="error-message" class="error"></div>
             
-            <form id="login-form" method="POST" action="/oauth2/login">
+            <form id="login-form" method="POST" action="/mcp/oauth2/login">
                 <input type="hidden" name="client_id" value="{client_id}">
                 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
                 <input type="hidden" name="state" value="{state or ''}">

@@ -69,7 +69,7 @@ def health_check() -> str:
     return '{"status": "healthy", "service": "bvbrc-consolidated-mcp"}'
 
 # Add OAuth2 endpoints
-@mcp.custom_route("/.well-known/openid-configuration", methods=["GET"])
+@mcp.custom_route("/mcp/.well-known/openid-configuration", methods=["GET"])
 async def openid_configuration_route(request) -> JSONResponse:
     """
     Serves the OIDC discovery document that ChatGPT expects.
@@ -77,13 +77,13 @@ async def openid_configuration_route(request) -> JSONResponse:
     return await oauth.openid_configuration(request)
 
 # OAuth Authorization Server metadata (well-known)
-@mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
+@mcp.custom_route("/mcp/.well-known/oauth-authorization-server", methods=["GET"])
 async def oauth_as_metadata(request) -> JSONResponse:
     return JSONResponse({
         "issuer": public_base_url,
-        "authorization_endpoint": f"{public_base_url}/oauth2/authorize",
-        "token_endpoint": f"{public_base_url}/oauth2/token",
-        "registration_endpoint": f"{public_base_url}/oauth2/register",
+        "authorization_endpoint": f"{public_base_url}/mcp/oauth2/authorize",
+        "token_endpoint": f"{public_base_url}/mcp/oauth2/token",
+        "registration_endpoint": f"{public_base_url}/mcp/oauth2/register",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
@@ -91,7 +91,7 @@ async def oauth_as_metadata(request) -> JSONResponse:
         "scopes_supported": ["profile", "token"],
     })
 
-@mcp.custom_route("/oauth2/register", methods=["POST"])
+@mcp.custom_route("/mcp/oauth2/register", methods=["POST"])
 async def oauth2_register_route(request) -> JSONResponse:
     """
     Registers a new client with the OAuth2 server.
@@ -99,7 +99,7 @@ async def oauth2_register_route(request) -> JSONResponse:
     """
     return await oauth.oauth2_register(request)
 
-@mcp.custom_route("/oauth2/authorize", methods=["GET"])
+@mcp.custom_route("/mcp/oauth2/authorize", methods=["GET"])
 async def oauth2_authorize_route(request):
     """
     Authorization endpoint - displays login page for user authentication.
@@ -107,7 +107,7 @@ async def oauth2_authorize_route(request):
     """
     return await oauth.oauth2_authorize(request)
 
-@mcp.custom_route("/oauth2/login", methods=["POST"])
+@mcp.custom_route("/mcp/oauth2/login", methods=["POST"])
 async def oauth2_login_route(request):
     """
     Handles the login form submission.
@@ -116,7 +116,7 @@ async def oauth2_login_route(request):
     """
     return await oauth.oauth2_login(request)
 
-@mcp.custom_route("/oauth2/token", methods=["POST"])
+@mcp.custom_route("/mcp/oauth2/token", methods=["POST"])
 async def oauth2_token_route(request):
     """
     Handles the token request.
