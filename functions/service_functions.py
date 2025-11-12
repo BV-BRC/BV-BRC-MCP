@@ -1,4 +1,4 @@
-from json_rpc import JsonRpcCaller
+from common.json_rpc import JsonRpcCaller
 from typing import List, Dict, Any
 import uuid
 import json
@@ -35,11 +35,13 @@ def get_service_info(service_name: str) -> str:
         IOError: If there's an error reading the file
     """
     try:
-        # Get the directory where this script is located
+        # Get the directory where this script is located (functions/)
         script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Get the parent directory (bvbrc-mcp-server/)
+        parent_dir = os.path.dirname(script_dir)
         
         # Construct the path to the prompt file
-        prompt_file_path = os.path.join(script_dir, 'prompts', f'{service_name}.txt')
+        prompt_file_path = os.path.join(parent_dir, 'prompts', f'{service_name}.txt')
         
         # Check if file exists
         if not os.path.exists(prompt_file_path):

@@ -7,21 +7,21 @@ running in STDIO mode for use with MCP clients like Claude Desktop.
 """
 
 from fastmcp import FastMCP
-from json_rpc import JsonRpcCaller
+from common.json_rpc import JsonRpcCaller
 from tools.data_tools import register_data_tools
 from tools.service_tools import register_service_tools
 from tools.workspace_tools import register_workspace_tools
-from token_provider import TokenProvider
+from common.token_provider import TokenProvider
 import json
 import sys
 import os
 
 # Load configuration
 try:
-    with open("config.json", "r") as f:
+    with open("config/config.json", "r") as f:
         config = json.load(f)
 except FileNotFoundError:
-    print("Warning: config.json not found, using defaults", file=sys.stderr)
+    print("Warning: config/config.json not found, using defaults", file=sys.stderr)
     config = {}
 
 # Get configuration values
@@ -44,7 +44,7 @@ mcp = FastMCP("BVBRC Consolidated MCP Server")
 
 # Register all tools from the three modules
 print("Registering data tools...", file=sys.stderr)
-register_data_tools(mcp, base_url)
+register_data_tools(mcp, base_url, token_provider)
 
 print("Registering service tools...", file=sys.stderr)
 register_service_tools(mcp, service_api, similar_genome_finder_api, token_provider)

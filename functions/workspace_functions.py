@@ -1,4 +1,4 @@
-from json_rpc import JsonRpcCaller
+from common.json_rpc import JsonRpcCaller
 from typing import List, Any
 import requests
 import os

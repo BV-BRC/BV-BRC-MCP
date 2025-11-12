@@ -9,6 +9,11 @@ import os
 import json
 from typing import Any, Dict, List, Tuple
 from bvbrc_solr_api import create_client, query
+from bvbrc_solr_api.core.solr_http_client import select as solr_select
+CURSOR_BATCH_SIZE = 1000
+# Timeout for Solr queries in seconds (default is 60, increase for large queries)
+SOLR_QUERY_TIMEOUT = 300.0  # 5 minutes
+
 
 
 def create_bvbrc_client(base_url: str = None, headers: Dict[str, str] = None) -> Any:
@@ -32,43 +37,91 @@ def create_bvbrc_client(base_url: str = None, headers: Dict[str, str] = None) ->
 
 
 def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None,
-                base_url: str = None, headers: Dict[str, str] = None) -> Tuple[List[Dict[str, Any]], int]:
+                base_url: str = None, headers: Dict[str, str] = None,
+                cursorId: str | None = None, countOnly: bool = False) -> Dict[str, Any]:
     """
     Query BV-BRC data directly using core name and filter string with cursor-based streaming.
     
     Args:
-        core: The core/collection name (e.g., "genome", "genome_feature", "genome_amr", "sp_gene")
-        filter_str: RQL filter string (e.g., "genome_id:123.45")
-        options: Optional query options
+        core: The core/collection name (e.g., "genome", "genome_feature")
+        filter_str: Solr query expression (e.g., "genome_id:123.45" or "species:\"Escherichia coli\"")
+        options: Optional query options (e.g., {"select": ["field1", "field2"], "sort": "field_name"})
         base_url: Optional base URL override
         headers: Optional headers override
+        cursorId: Cursor ID for pagination (optional, use "*" or None for first page)
+        countOnly: If True, iterate through all pages to compute total count without returning data
         
     Returns:
-        Tuple of (list of records from the specified core, count of results)
+        Dict with keys depending on countOnly:
+        - If countOnly is True: { "count": <total_count> }
+        - Else: { "results": [ ...batch... ], "count": <batch_count>, "nextCursorId": <str|None> }
+        
+    Note:
+        Batch size is hardcoded to 1000 entries per page. Use nextCursorId from the response
+        to fetch the next batch by passing it as cursorId in a subsequent call.
     """
     client = create_bvbrc_client(base_url, headers)
     options = options or {}
     
-    # Convert limit to rows for cursor pagination
-    rows = options.get("limit", 1000)
-    if "limit" in options:
-        del options["limit"]
-    options["rows"] = rows
+    # Build context_overrides with timeout and any provided base_url/headers
+    context_overrides = {"timeout": SOLR_QUERY_TIMEOUT}
+    if base_url:
+        context_overrides["base_url"] = base_url
+    if headers:
+        context_overrides["headers"] = headers
     
-    # Use stream_all_solr for cursor-based streaming
+    # Prepare a configured CursorPager via the client (ensures correct unique_key/sort per collection)
     pager = getattr(client, core).stream_all_solr(
-        rows=options.get("rows", 1000),
+        rows=CURSOR_BATCH_SIZE,
         sort=options.get("sort"),
         fields=options.get("select"),
         q_expr=filter_str if filter_str else "*:*",
-        context_overrides={"base_url": base_url, "headers": headers} if base_url or headers else None
+        start_cursor=cursorId or "*",
+        context_overrides=context_overrides
     )
-    
-    # Collect all results into a list
-    results = []
-    for doc in pager:
-        results.append(doc)
-    return results, len(results)
+
+    # Helper to execute a single Solr select call based on the pager's current state
+    def _single_page(cursor_mark: str) -> Tuple[List[Dict[str, Any]], str | None]:
+        params = dict(pager.base_params)
+        params["rows"] = pager.rows
+        params["sort"] = pager.sort
+        params["cursorMark"] = cursor_mark
+        result = solr_select(
+            pager.collection,
+            params,
+            base_url=pager.base_url,
+            headers=pager.headers,
+            auth=pager.auth,
+            timeout=pager.timeout,
+        )
+        response = result.get("response", {})
+        docs: List[Dict[str, Any]] = response.get("docs", [])
+        next_cursor = result.get("nextCursorMark")
+        return docs, next_cursor
+
+    if countOnly:
+        # Iterate through all pages to compute total count without returning data
+        total_count = 0
+        last_mark: str | None = None
+        current_cursor = pager.cursor
+        while True:
+            docs, next_cursor = _single_page(current_cursor)
+            if not docs:
+                break
+            total_count += len(docs)
+            if next_cursor is None or next_cursor == current_cursor or next_cursor == last_mark:
+                break
+            last_mark = current_cursor
+            current_cursor = next_cursor
+        return {"count": total_count}
+
+    # Fetch a single batch/page and return nextCursorId for optional continuation
+    docs, next_cursor = _single_page(pager.cursor)
+    return {
+        "results": docs,
+        "count": len(docs),
+        "nextCursorId": next_cursor,
+    }
 
 
 def format_query_result(result: List[Dict[str, Any]], max_items: int = 10) -> str:

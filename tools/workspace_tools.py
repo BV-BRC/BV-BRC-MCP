@@ -5,8 +5,8 @@ from functions.workspace_functions import (
     workspace_upload, workspace_search, workspace_create_genome_group,
     workspace_create_feature_group, workspace_get_genome_group_ids, workspace_get_feature_group_ids
 )
-from json_rpc import JsonRpcCaller
-from token_provider import TokenProvider
+from common.json_rpc import JsonRpcCaller
+from common.token_provider import TokenProvider
 import json
 from typing import List, Optional
 

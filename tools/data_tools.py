@@ -7,12 +7,13 @@ This module contains MCP tools for querying MVP (Minimum Viable Product) data fr
 
 import json
 import re
-from typing import Optional
+from typing import Optional, Dict
 
 from fastmcp import FastMCP
 
 # Global variables to store configuration
 _base_url = None
+_token_provider = None
 
 from functions.data_functions import (
     query_direct,
@@ -22,14 +23,24 @@ from functions.data_functions import (
 )
 
 
-def register_data_tools(mcp: FastMCP, base_url: str):
-    """Register all MVP-related MCP tools with the FastMCP server."""
-    global _base_url
+def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
+    """
+    Register all MVP-related MCP tools with the FastMCP server.
+    
+    Args:
+        mcp: FastMCP server instance
+        base_url: Base URL for BV-BRC API
+        token_provider: TokenProvider instance for handling authentication tokens (optional)
+    """
+    global _base_url, _token_provider
     _base_url = base_url
+    _token_provider = token_provider
 
     @mcp.tool(annotations={"readOnlyHint": True})
     def query_collection(collection: str, filter_str: str = "",
-                          select: Optional[str] = None, sort: Optional[str] = None) -> str:
+                          select: Optional[str] = None, sort: Optional[str] = None,
+                          cursorId: Optional[str] = None, countOnly: bool = False,
+                          token: Optional[str] = None) -> str:
         """
         Query BV-BRC data directly using collection name and Solr query expression.
         
@@ -38,6 +49,9 @@ def register_data_tools(mcp: FastMCP, base_url: str):
             filter_str: Solr query expression (e.g., "genome_id:123.45" or "species:\"Escherichia coli\"")
             select: Comma-separated list of fields to select (optional)
             sort: Field to sort by (optional)
+            cursorId: Cursor ID for pagination (optional, use "*" or omit for first page)
+            countOnly: If True, only return the total count without data (optional, default False)
+            token: Authentication token for API access (optional, will be auto-detected if token_provider is configured)
 
         Notes: Information on genome resistance to antibiotics is in the genome_amr table. Information on
             special feature properties like Antibiotic Resistance, Virulence Factor, and Essential Gene is in the
@@ -48,8 +62,12 @@ def register_data_tools(mcp: FastMCP, base_url: str):
             The solr_collection_parameters tool lists all the field names for each collection. This tool should
             be checked to avoid Bad Request errors.
 
+            When countOnly is True, use the minimum number of fields in the select parameter to reduce the number of fields returned.
+
         Returns:
-            Formatted query results
+            JSON string with query results:
+            - If countOnly is True: {"count": <total_count>}
+            - Otherwise: {"count": <batch_count>, "results": [...], "nextCursorId": <str|None>}
         """
         print(f"Querying collection: {collection}")
         options = {}
@@ -57,20 +75,29 @@ def register_data_tools(mcp: FastMCP, base_url: str):
             options["select"] = select.split(",")
         if sort:
             options["sort"] = sort
+        
+        # Get authentication token and build headers
+        headers: Optional[Dict[str, str]] = None
+        if _token_provider:
+            auth_token = _token_provider.get_token(token)
+            if auth_token:
+                headers = {"Authorization": auth_token}
+        elif token:
+            # Fallback: if token is provided directly and no token_provider, use it
+            headers = {"Authorization": token}
+
         # If we have a genome_feature query, we need to insure only patric features come back.
         if not filter_str:
             filter_str = "patric_id:*"
         elif collection == "genome_feature" and not re.search(r"\bpatric_id:", filter_str):
             filter_str += " AND patric_id:*"
         print(f"Filter is {filter_str}")
-
+        
         try:
-            result, count = query_direct(collection, filter_str, options, _base_url)
-            print(f"Query returned {len(result)} of {count} results.")
-            return json.dumps({
-                "count": count,
-                "results": result
-            }, indent=2)
+            result = query_direct(collection, filter_str, options, _base_url, 
+                                 headers=headers, cursorId=cursorId, countOnly=countOnly)
+            print(f"Query returned {len(result)} results.")
+            return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({
                 "error": f"Error querying {collection}: {str(e)}"

@@ -1,20 +1,21 @@
-# BVBRC Consolidated MCP Server
+# BV-BRC MCP Server
 
-A unified Model Context Protocol (MCP) server that consolidates three BVBRC services into a single server:
-- **Data Tools**: Query BVBRC Solr collections for genome, feature, and other biological data
-- **Service Tools**: Submit and manage BVBRC analysis jobs (assembly, annotation, BLAST, etc.)
-- **Workspace Tools**: Manage BVBRC workspace files, folders, and groups
+A Model Context Protocol (MCP) server for the Bacterial-Viral Bioinformatics resource Center:
+- **Data Tools**: Query BV-BRC Solr collections for genome, feature, and other biological data
+- **Service Tools**: Submit and manage BV-BRC analysis jobs (assembly, annotation, BLAST, etc.)
+- **Workspace Tools**: Manage BV-BRC workspace files, folders, and groups
 
-## Features
+<details>
+<summary><h2>Features</h2></summary>
 
-### Data Tools (MVP)
-- `query_collection`: Query any BVBRC Solr collection with flexible filtering
+### Data Tools
+- `query_collection`: Query any BV-BRC Solr collection with flexible filtering
 - `solr_collection_parameters`: Get schema information for collections
 - `solr_query_instructions`: Get help on query syntax
 - `solr_collections`: List all available collections
 
 ### Service Tools
-- `list_service_apps`: List all available BVBRC analysis services
+- `list_service_apps`: List all available BV-BRC analysis services
 - `get_job_details`: Query the status of submitted jobs
 - Submit jobs for various analyses:
   - Genome Assembly
@@ -42,25 +43,145 @@ A unified Model Context Protocol (MCP) server that consolidates three BVBRC serv
 - `get_genome_group_ids`: Get genome IDs from a group
 - `get_feature_group_ids`: Get feature IDs from a group
 
+</details>
+
+<details>
+<summary><h2>Connecting the Remote BV-BRC MCP Server to ChatGPT</h2></summary>
+
+### Step 1: Enable Developer Mode
+
+1. Click the **plus** next to "Ask me anything"
+2. Click **"Add sources"**
+3. You should now see "Sources" and "Add" below your chat box
+4. Click the **down arrow** next to "Add"
+5. Click **"Connect more"**
+6. Scroll down to **Advanced Settings**
+7. Click the toggle next to **Developer Mode** (must be "on")
+8. Click **Back**
+
+### Step 2: Create MCP Server Connection
+
+1. In the upper right-hand corner, click **"Create"**
+2. Fill in the following:
+   - **Icon**: Optional
+   - **Name**: BV-BRC MCP
+   - **Description**: ''
+   - **MCP Server URL**: https://dev-7.bv-brc.org/mcp
+3. **Authentication**: 
+   - Leave authentication on OAuth
+4. Check the box if you **Trust this application**
+5. Click **"Create"**
+
+### Step 3: Connect to Your Server
+
+1. You should now see 'BV-BRC MCP' under **"Enabled apps & connectors"**
+2. Click the 'X' in the top left to go back to the chat screen
+3. In a **New Chat**, click the '+' button and hover over **More**
+  - You should see **BV-BRC MCP** as an option under **Canvas**
+4. Select **BV-BRC MCP**
+
+</details>
+
+<details>
+<summary><h2>Connecting the Remote BV-BRC MCP Server to Claude</h2></summary>
+
+1. Click **account** in bottom left and go to **settings**
+
+2. Click **'Connectors'**
+
+3. Click **'Add custom connector'**
+
+4. Fill in the following:
+   - **Name**: BV-BRC MCP
+   - **Remote MCP server URL**: https://dev-7.bv-brc.org/mcp
+
+5. Click **'Add'**
+
+6. Then click **'Connect'**
+
+7. Log into BV-BRC
+
+8. It's now available to use in a new chat
+
+</details>
+
+<details>
+<summary><h2>Installing as a Claude Extension</h2></summary>
+
+Open your terminal
+
+0. Clone Github Repository
+   ```bash
+   git clone https://github.com/cucinellclark/bvbrc-mcp-server
+   cd bvbrc-mcp-server
+   ```
+
+1. Install the requirements:
+   ```bash
+   ./install.sh
+   ```
+
+2. Activate the environment:
+   ```bash
+   source mcp_env/bin/activate
+   ```
+
+3. Install the MCP Builder CLI:
+   ```bash
+   npm install -g @anthropic-ai/mcpb
+   ```
+
+4. Generate the MCP configuration file (if you haven't already):
+   ```bash
+   python3 bvbrc_login_and_setup.py
+   ```
+
+5. Pack the extension:
+   ```bash
+   mcpb pack
+   ```
+
+6. In Claude, Go to Settings, then Extensions
+
+7. Click Advanced settings, then Install Extension
+
+8. Select the file 'bvbrc-mcp-server.mcpb' then click Preview
+
+9. It should pull up a preview page, then click Install
+
+</details>
+
+<details>
+<summary><h2>MCP Development</h2></summary>
+
+## Note
+Local server development is recommended for working on MCP tools
+
 ## Installation
 
-1. Create a Python virtual environment:
+Run the installation script, which will create the virtual python environment and install a data api and remaining requirements
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# clone the repository and enter it
+./install.sh
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+## Local server development
 
-3. Configure the server:
-Edit `config.json` to set:
+Generate mcp config file:
+```bash
+python3 bvbrc_login_and_setup.py
+```
+Creates mcp_config.json
+
+Paste its contents into your chatbots mcp config file
+
+## Remote server development
+Configure the server (for remote servers):
+
+Edit config.json to set:
 - API URLs (workspace, service, data)
 - Server host and port
 - Authentication URL
-- Optional: Default authentication token
 
 ## Configuration
 
@@ -74,51 +195,26 @@ The `config.json` file contains:
     "similar_genome_finder_api_url": "https://p3.theseed.org/services/minhash_service",
     "authentication_url": "https://user.patricbrc.org/authenticate",
     "mcp_url": "127.0.0.1",
-    "port": 12010,
-    "token": ""
+    "port": 12010
 }
 ```
 
-## Usage
+## Running the Server
 
-### Choosing a Mode
-
-The consolidated server supports two modes:
-
-| Feature | HTTP Mode | STDIO Mode |
-|---------|-----------|------------|
-| **Use Case** | Web clients, ChatGPT, programmatic access | Claude Desktop, local MCP clients |
-| **Authentication** | OAuth2, config token, or header | Environment variable (`KB_AUTH_TOKEN`) |
-| **Port** | Requires open port (default: 12010) | No port needed |
-| **Security** | OAuth2 flow with user login | Environment variable only |
-| **Best For** | Multi-user, web-based access | Single-user, desktop applications |
-
-### Running the Server
-
-#### HTTP Mode (for web clients, ChatGPT, etc.)
+### HTTP Mode (for web clients, ChatGPT, etc.)
 
 Start the HTTP server:
 ```bash
-python http_server.py
-```
-
-Or use the module form:
-```bash
-python -m bvbrc-mcp
+./start_http_server.sh
 ```
 
 The server will start on the configured host and port (default: `127.0.0.1:12010`).
 
-**Note:** The module form (`python -m bvbrc-mcp`) defaults to HTTP mode. Use `python -m bvbrc-mcp --stdio` to run in STDIO mode.
-
 #### STDIO Mode (for Claude Desktop, etc.)
 
 Start the STDIO server:
-```bash
-python stdio_server.py
-```
-
-Or set it up in your MCP client configuration (e.g., Claude Desktop):
+Set it up in your MCP client configuration (e.g., Claude Desktop):
+See installation section
 ```json
 {
   "mcpServers": {
@@ -133,187 +229,61 @@ Or set it up in your MCP client configuration (e.g., Claude Desktop):
 }
 ```
 
-### Authentication
+## Instructions for MCP configuration Setup
 
-The server supports multiple authentication methods depending on the mode:
+[Claude](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp)
 
-#### HTTP Mode Authentication
-
-1. **OAuth2 Flow** (recommended for interactive use):
-   - The server provides OAuth2 endpoints for client registration and user authentication
-   - Users authenticate through the BV-BRC authentication service
-   - Access tokens are automatically managed
-
-2. **Token in Config** (for testing):
-   - Set the `token` field in `config.json`
-   - Token will be used as the default for all requests
-
-3. **Token in Request** (for API calls):
-   - Pass the token as a parameter to each tool call
-   - Overrides the config token if provided
-
-4. **Authorization Header** (for programmatic access):
-   - Include `Authorization: Bearer <token>` header in HTTP requests
-   - Highest priority, overrides all other methods
-
-#### STDIO Mode Authentication
-
-1. **Environment Variable** (primary method):
-   - Set `KB_AUTH_TOKEN` environment variable
-   - Example: `export KB_AUTH_TOKEN="un=youruser|tokenid=..."`
-
-2. **Token Parameter** (fallback):
-   - Pass the token as a parameter to each tool call
-   - Useful if environment variable is not set
-
-### Example Tool Calls
-
-#### Query Data
-```json
-{
-  "tool": "query_collection",
-  "arguments": {
-    "collection": "genome",
-    "filter_str": "species:\"Escherichia coli\"",
-    "select": "genome_id,genome_name,species,strain",
-    "sort": "genome_name"
-  }
-}
-```
-
-#### Submit a Job
-```json
-{
-  "tool": "submit_genome_annotation_app",
-  "arguments": {
-    "contigs": "/username/home/my_contigs.fasta",
-    "scientific_name": "Escherichia coli",
-    "output_path": "/username/home",
-    "output_file": "my_annotation"
-  }
-}
-```
-
-#### Manage Workspace
-```json
-{
-  "tool": "workspace_ls_tool",
-  "arguments": {
-    "paths": ["home"]
-  }
-}
-```
+[ChatGPT](https://docs.atlan.com/product/capabilities/atlan-ai/how-tos/chatgpt-remote-mcp)
 
 ## Architecture
 
 ### Directory Structure
 
 ```
-bvbrc-mcp/
-├── __init__.py                 # Package initialization
-├── __main__.py                 # Entry point for module execution
-├── http_server.py              # HTTP server (for web clients, ChatGPT)
-├── stdio_server.py             # STDIO server (for Claude Desktop, etc.)
-├── config.json                 # Configuration file
-├── requirements.txt            # Python dependencies
-├── README.md                   # This file
-├── token_provider.py           # Unified authentication token handling
-├── json_rpc.py                 # JSON-RPC client for API calls
-├── auth.py                     # OAuth2 authentication endpoints (HTTP only)
-├── tools/                      # Tool registration modules
+bvbrc-mcp-server/
+├── __init__.py                      # Package initialization
+├── __main__.py                      # Entry point for module execution
+├── http_server.py                    # HTTP server (for web clients, ChatGPT)
+├── install.sh                       # Installation script
+├── mcp_config.json                  # Generated MCP configuration
+├── mcp_example.json                 # Example MCP configuration
+├── mcp.pm2.config.js                 # PM2 process manager configuration
+├── README.md                        # This file
+├── requirements.txt                 # Python dependencies
+├── start_server.sh                  # Server startup script
+├── stdio_server.py                  # STDIO server (for Claude Desktop, etc.)
+├── bvbrc_login_and_setup.py        # Script to login and generate MCP config file
+├── common/                          # Common utility modules
 │   ├── __init__.py
-│   ├── data_tools.py           # Data query tools registration
-│   ├── service_tools.py        # Service job tools registration
-│   └── workspace_tools.py      # Workspace management tools registration
-├── functions/                  # Function implementation modules
+│   ├── auth.py                      # OAuth2 authentication endpoints (HTTP only)
+│   ├── json_rpc.py                  # JSON-RPC client for API calls
+│   └── token_provider.py            # Unified authentication token handling
+├── config/                          # Configuration files
+│   ├── config.json                  # Main configuration file
+│   └── ...
+├── bvbrc-python-api/                # BV-BRC Python API dependency
+│   ├── bvbrc_solr_api/              # Solr API implementation
+│   ├── pyproject.toml
+│   └── README.md
+├── functions/                       # Function implementation modules
 │   ├── __init__.py
-│   ├── data_functions.py       # Data query implementations
-│   ├── service_functions.py    # Service job implementations
-│   └── workspace_functions.py  # Workspace implementations
-└── prompts/                    # Collection schema documentation
-    ├── genome.txt
-    ├── genome_feature.txt
-    └── ...
+│   ├── data_functions.py            # Data query implementations
+│   ├── service_functions.py         # Service job implementations
+│   └── workspace_functions.py       # Workspace implementations
+├── images/                          # Image assets
+│   └── bvbrc_logo_base64.txt
+├── prompts/                         # Collection schema documentation
+│   ├── antibiotics.txt
+│   ├── bacterial_genome_tree.txt
+│   ├── bioset.txt
+│   ├── bioset_result.txt
+│   ├── blast.txt
+│    ...
+└── tools/                           # Tool registration modules
+    ├── __init__.py
+    ├── data_tools.py                # Data query tools registration
+    ├── service_tools.py             # Service job tools registration
+    └── workspace_tools.py           # Workspace management tools registration
 ```
 
-### Design Principles
-
-1. **Unified Authentication**: Single `TokenProvider` class handles all authentication
-2. **Modular Tools**: Each service type has its own tools and functions modules
-3. **Minimal Code Rewrite**: Direct integration of existing code with path updates
-4. **Standard Format**: Follows the structure of individual MCP servers
-
-## Development
-
-### Adding New Tools
-
-1. Add the function implementation to the appropriate `functions/*.py` file
-2. Register the tool in the corresponding `tools/*.py` file
-3. Update this README with the new tool documentation
-
-### Testing
-
-Each service can be tested independently using the corresponding test scripts from the original servers:
-- Data tools: Use the data MCP server tests
-- Service tools: Use the service MCP server tests in `../service_mcp_testing/`
-- Workspace tools: Use the workspace MCP server tests
-
-## OAuth2 Endpoints
-
-The server provides the following OAuth2 endpoints for integration with clients like ChatGPT:
-
-- `/.well-known/openid-configuration`: OIDC discovery document
-- `/oauth2/register`: Client registration endpoint
-- `/oauth2/authorize`: User authorization endpoint
-- `/oauth2/login`: Login form handler
-- `/oauth2/token`: Token exchange endpoint
-
-## License
-
-See the individual service READMEs for license information:
-- [bvbrc-data-mcp-server](../bvbrc-data-mcp-server/README.md)
-- [bvbrc-service-mcp](../bvbrc-service-mcp/README.md)
-- [bvbrc-workspace-mcp](../bvbrc-workspace-mcp/README.md)
-
-## Support
-
-For issues and questions:
-- BVBRC website: https://www.bv-brc.org
-- BVBRC help: help@bv-brc.org
-
-## Testing
-
-You can test the server in either mode:
-
-### HTTP Mode Testing
-
-```bash
-# Start the server
-python http_server.py
-
-# In another terminal, test with curl
-curl -X POST http://127.0.0.1:12010/tools/list \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your_token_here"
-```
-
-### STDIO Mode Testing
-
-```bash
-# Set your token
-export KB_AUTH_TOKEN="your_token_here"
-
-# Run the server (it will wait for MCP protocol input)
-python stdio_server.py
-```
-
-## Changelog
-
-### Version 1.0.0 (Initial Release)
-- Consolidated data, service, and workspace MCP servers
-- Unified authentication with `TokenProvider`
-- HTTP server with OAuth2 support for interactive authentication
-- STDIO server for desktop MCP clients
-- Organized tools and functions into separate modules
-- Support for all data, service, and workspace operations
-
+</details>

@@ -6,25 +6,19 @@ This server consolidates the data, service, and workspace MCP servers into a sin
 """
 
 from fastmcp import FastMCP
-from json_rpc import JsonRpcCaller
+from common.json_rpc import JsonRpcCaller
 from tools.data_tools import register_data_tools
 from tools.service_tools import register_service_tools
 from tools.workspace_tools import register_workspace_tools
-from token_provider import TokenProvider
+from common.token_provider import TokenProvider
 from starlette.responses import JSONResponse, HTMLResponse, RedirectResponse
 import json
 import sys
 import os
-from auth import (
-    openid_configuration, 
-    oauth2_register, 
-    oauth2_authorize, 
-    oauth2_login, 
-    oauth2_token
-)
+from common.auth import BvbrcOAuthProvider
 
 # Load configuration
-with open("config.json", "r") as f:
+with open("config/config.json", "r") as f:
     config = json.load(f)
 
 # Get configuration values
@@ -45,12 +39,24 @@ workspace_api = JsonRpcCaller(workspace_api_url)
 service_api = JsonRpcCaller(service_api_url)
 similar_genome_finder_api = JsonRpcCaller(similar_genome_finder_api_url)
 
-# Create FastMCP server
-mcp = FastMCP("BVBRC Consolidated MCP Server")
+# Publicly reachable server URL for discovery and metadata
+# Use PUBLIC_BASE_URL env var if set, otherwise construct from openid_config_url
+# The server URL is where this MCP server is accessible, not the data API URL
+server_url = os.environ.get("PUBLIC_BASE_URL") or openid_config_url
+
+# Initialize OAuth provider (class-based) with server URL (not data API base_url)
+oauth = BvbrcOAuthProvider(
+    base_url=server_url,  # This is the MCP server URL, not the data API URL
+    openid_config_url=openid_config_url,
+    authentication_url=authentication_url,
+)
+
+# Create FastMCP server with auth provider so /mcp is protected by FastMCP
+mcp = FastMCP("BVBRC Consolidated MCP Server", auth=oauth)
 
 # Register all tools from the three modules
 print("Registering data tools...", file=sys.stderr)
-register_data_tools(mcp, base_url)
+register_data_tools(mcp, base_url, token_provider)
 
 print("Registering service tools...", file=sys.stderr)
 register_service_tools(mcp, service_api, similar_genome_finder_api, token_provider)
@@ -59,52 +65,71 @@ print("Registering workspace tools...", file=sys.stderr)
 register_workspace_tools(mcp, workspace_api, token_provider)
 
 # Add health check tool
-@mcp.tool()
+# @mcp.tool()
 def health_check() -> str:
     """Health check endpoint"""
     return '{"status": "healthy", "service": "bvbrc-consolidated-mcp"}'
 
 # Add OAuth2 endpoints
-@mcp.custom_route("/.well-known/openid-configuration", methods=["GET"])
+@mcp.custom_route("/mcp/.well-known/openid-configuration", methods=["GET"])
 async def openid_configuration_route(request) -> JSONResponse:
     """
     Serves the OIDC discovery document that ChatGPT expects.
     """
-    return openid_configuration(request, openid_config_url)
+    return await oauth.openid_configuration(request)
 
-@mcp.custom_route("/oauth2/register", methods=["POST"])
+# OAuth Authorization Server metadata (well-known)
+# Per RFC 8414 section 3, if issuer is "https://example.com/issuer1",
+# metadata is at "https://example.com/.well-known/oauth-authorization-server/issuer1"
+# So for issuer {server_url}/mcp, metadata should be at /.well-known/oauth-authorization-server/mcp
+@mcp.custom_route("/.well-known/oauth-authorization-server/mcp", methods=["GET"])
+async def oauth_as_metadata(request) -> JSONResponse:
+    issuer = f"{server_url}/mcp"
+    return JSONResponse({
+        "issuer": issuer,
+        "authorization_endpoint": f"{issuer}/oauth2/authorize",
+        "token_endpoint": f"{issuer}/oauth2/token",
+        "registration_endpoint": f"{issuer}/oauth2/register",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
+        "code_challenge_methods_supported": ["S256"],
+        "scopes_supported": ["profile", "token"],
+    })
+
+@mcp.custom_route("/mcp/oauth2/register", methods=["POST"])
 async def oauth2_register_route(request) -> JSONResponse:
     """
     Registers a new client with the OAuth2 server.
     Implements RFC 7591 OAuth 2.0 Dynamic Client Registration.
     """
-    return await oauth2_register(request)
+    return await oauth.oauth2_register(request)
 
-@mcp.custom_route("/oauth2/authorize", methods=["GET"])
+@mcp.custom_route("/mcp/oauth2/authorize", methods=["GET"])
 async def oauth2_authorize_route(request):
     """
     Authorization endpoint - displays login page for user authentication.
     This is where ChatGPT redirects the user to log in.
     """
-    return await oauth2_authorize(request, authentication_url)
+    return await oauth.oauth2_authorize(request)
 
-@mcp.custom_route("/oauth2/login", methods=["POST"])
+@mcp.custom_route("/mcp/oauth2/login", methods=["POST"])
 async def oauth2_login_route(request):
     """
     Handles the login form submission.
     Authenticates the user and generates an authorization code.
     Redirects back to ChatGPT's callback URL with the code.
     """
-    return await oauth2_login(request, authentication_url)
+    return await oauth.oauth2_login(request)
 
-@mcp.custom_route("/oauth2/token", methods=["POST"])
+@mcp.custom_route("/mcp/oauth2/token", methods=["POST"])
 async def oauth2_token_route(request):
     """
     Handles the token request.
     Exchanges an authorization code for an access token.
     Retrieves the stored user token using the authorization code.
     """
-    return await oauth2_token(request)
+    return await oauth.oauth2_token(request)
 
 def main() -> int:
     print(f"Starting BVBRC Consolidated MCP Server on port {port}...", file=sys.stderr)

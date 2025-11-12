@@ -13,10 +13,12 @@ except ImportError:
 class TokenProvider:
     """Handles token retrieval for both stdio and HTTP modes"""
     
-    def __init__(self, mode: str = "stdio", config_path: str = "config.json"):
+    def __init__(self, mode: str = "stdio", config_path: str = "config/config.json", mcp_config_path: str = "config/mcp_config.json"):
         self.mode = mode
         self.config_path = config_path
+        self.mcp_config_path = mcp_config_path
         self._config_token = None
+        self._mcp_config_token = None
     
     def get_token(self, provided_token: Optional[str] = None) -> Optional[str]:
         """
@@ -41,15 +43,18 @@ class TokenProvider:
             # If token is provided (HTTP mode), use it
             return provided_token
         
-        # Finally check mode-specific sources
         if self.mode == "stdio":
             # STDIO mode: get from environment
-            return os.getenv("KB_AUTH_TOKEN")
+            env_token = os.getenv("KB_AUTH_TOKEN")
+            if env_token:
+                return env_token
+            else:
+                print("Warning: KB_AUTH_TOKEN environment variable is not set", file=sys.stderr)
+                print("  Service and workspace tools will require a token parameter", file=sys.stderr)
+                return None
         else:
-            # HTTP mode: get from config
-            if self._config_token is None:
-                self._load_config_token()
-            return self._config_token
+            print("Warning: Invalid mode", file=sys.stderr)
+            return None
     
     def _get_token_from_request_headers(self) -> Optional[str]:
         """
@@ -102,4 +107,4 @@ class TokenProvider:
         except Exception as e:
             print(f"Warning: Could not load token from config: {e}", file=sys.stderr)
             self._config_token = None
-
+    
