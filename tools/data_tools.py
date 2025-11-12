@@ -42,7 +42,8 @@ def register_data_tools(mcp: FastMCP, base_url: str):
         Notes: Information on genome resistance to antibiotics is in the genome_amr table. Information on
             special feature properties like Antibiotic Resistance, Virulence Factor, and Essential Gene is in the
             sp_gene table. To find which features are in a subsystem, use the subsystem_ref table. Use the
-            genome_name field to search for an organism by name.
+            genome_name field to search for an organism by name. The solr_collection_parameters tool lists
+            all the field names for each collection. This tool should be checked to avoid Bad Request errors.
 
         Returns:
             Formatted query results
