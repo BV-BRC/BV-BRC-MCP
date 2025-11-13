@@ -97,7 +97,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         elif collection == "genome_feature" and not re.search(r"\bpatric_id:", filter_str):
             filter_str += " AND patric_id:*"
         # For all queries, we have to make sure the field values with spaces are quoted.
-        filter_list = re.split(r'\s+AND\s+|\s+OR\s+', filter_str)
+        filter_list = re.split(r'\s+AND\s+', filter_str)
         for i, f in enumerate(filter_list):
             match = re.match(r'(\S+):["(](.*)[)"]', f)
             if not match:
