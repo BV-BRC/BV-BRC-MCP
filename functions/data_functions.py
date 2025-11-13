@@ -251,7 +251,7 @@ def list_solr_collections() -> str:
     """
     return """Available Solr Collections:
         1. **genome** - Complete bacterial and viral genome assemblies with metadata including taxonomy, quality metrics, geographic location, and antimicrobial resistance data.
-        2. **genome_feature** - Individual genes, proteins, and functional elements within genomes, including annotations, functional classifications, and sequence information.
+        2. **genome_feature** - Individual genes, proteins, and functional elements within genomes, including annotations, functional classifications, and sequence information. Does not include special properties like virulence or resistance factors.
         3. **genome_sequence** - Raw DNA/RNA sequence data for genomes and individual sequences with accession numbers and sequence metadata.
         4. **antibiotics** - Comprehensive database of antimicrobial compounds with chemical properties, mechanisms of action, and pharmacological classifications.
         5. **bioset_result** - Experimental results from gene expression, proteomics, and other high-throughput studies with statistical measures and experimental conditions.
@@ -267,7 +267,7 @@ def list_solr_collections() -> str:
         15. **genome_amr** - Antimicrobial resistance data linked to specific genomes and resistance mechanisms.
         16. **sequence_feature** - Sequence variants and mutations with functional annotations.
         17. **protein_feature** - Protein domain and functional feature annotations.
-        18. **subsystem** - Functional subsystem classifications for metabolic and cellular processes.
+        18. **subsystem** - Features that participate in subsystems, along with the functional roles they perform.
         19. **ppi** - Protein-protein interaction data.
         20. **spike_variant** - SARS-CoV-2 spike protein variant information.
         21. **spike_lineage** - SARS-CoV-2 lineage and variant classifications.
@@ -279,8 +279,8 @@ def list_solr_collections() -> str:
         27. **id_ref** - Identifier reference mappings.
         28. **pathway_ref** - Pathway reference data.
         29. **protein_family_ref** - Protein family reference classifications.
-        30. **sp_gene_ref** - Specialized gene reference data.
-        31. **sp_gene** - Specialized gene data.
-        32. **subsystem_ref** - Subsystem reference classifications.
+        30. **sp_gene_ref** - Special gene property reference.
+        31. **sp_gene** - Genes with special properties (Antibiotic Resistance, Virulence Factor, Transporter)
+        32. **subsystem_ref** - Reference of names and classifications of subsystems used to group commonly-associated functional roles.
         33. **sequence_feature_vt** - Sequence feature variant type data."""
 
