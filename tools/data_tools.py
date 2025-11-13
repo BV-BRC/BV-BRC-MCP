@@ -89,7 +89,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             headers = {"Authorization": token}
 
         # If we have a genome_feature query, we need to insure only patric features come back.
-        if not filter_str:
+        if collection == "genome_feature" and not filter_str:
             filter_str = "patric_id:*"
         elif collection == "genome_feature" and not re.search(r"\bpatric_id:", filter_str):
             filter_str += " AND patric_id:*"
