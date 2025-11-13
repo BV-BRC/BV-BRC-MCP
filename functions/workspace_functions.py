@@ -295,9 +295,6 @@ def workspace_create_genome_group(api: JsonRpcCaller, genome_group_path: str, ge
     Create a genome group in the workspace using the JSON-RPC API.
     """
     genome_group_name = genome_group_path.split('/')[-1]
-    print("genome_id_list", genome_id_list, file=sys.stderr)
-    print("genome_id_list type", type(genome_id_list), file=sys.stderr)
-    print("genome_id_list length", len(genome_id_list) if isinstance(genome_id_list, list) else "N/A", file=sys.stderr)
     try:
         content = {
             'id_list': {

@@ -5,6 +5,6 @@
     "similar_genome_finder_api_url": "https://p3.theseed.org/services/minhash_service",
     "authentication_url": "https://user.patricbrc.org/authenticate",
     "openid_config_url": "https://dev-7.bv-brc.org",
-    "mcp_url": "127.0.0.1",
-    "port":9001
+    "mcp_url": "140.221.78.67",
+    "port":12007
 }

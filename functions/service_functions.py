@@ -219,7 +219,6 @@ def start_comprehensive_genome_analysis_app(api: JsonRpcCaller, token: str = Non
         return []
 
 def start_blast_app(api: JsonRpcCaller, token: str = None, user_id: str = None, input_type: str = None, input_source: str = None, input_fasta_data: str = None, input_id_list: List[str] = None, input_fasta_file: str = None, input_feature_group: str = None, input_genome_group: str = None, db_type: str = None, db_source: str = None, db_fasta_data: str = None, db_fasta_file: str = None, db_id_list: List[str] = None, db_feature_group: str = None, db_genome_group: str = None, db_genome_list: List[str] = None, db_taxon_list: List[str] = None, db_precomputed_database: str = None, blast_program: str = None, blast_evalue_cutoff: float = 1e-5, blast_max_hits: int = 300, blast_min_coverage: int = None, output_path: str = None, output_file: str = None) -> str:
-    print("start_blast_app called", file=sys.stdout)
     app_name = "Homology"
     try:
         # Set default values if not provided

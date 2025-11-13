@@ -67,7 +67,6 @@ class JsonRpcCaller:
             "id": request_id,
             "params": params,
         }
-        print("payload", payload, file=sys.stderr)
 
         if token:
             self.session.headers.update({
@@ -80,7 +79,6 @@ class JsonRpcCaller:
                 data=json.dumps(payload),
                 timeout=30
             )
-            print("response json_rpc", response, file=sys.stdout)
             response.raise_for_status()
             
             result = response.json()
