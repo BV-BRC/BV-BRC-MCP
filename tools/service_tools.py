@@ -233,7 +233,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         return start_metagenomic_binning_app(api, token=auth_token, user_id=user_id, paired_end_libs=paired_end_libs, single_end_libs=single_end_libs, srr_ids=srr_ids, contigs=contigs, genome_group=genome_group, skip_indexing=skip_indexing, recipe=recipe, viral_recipe=viral_recipe, output_path=output_path, output_file=output_file, force_local_assembly=force_local_assembly, force_inline_annotation=force_inline_annotation, perform_bacterial_binning=perform_bacterial_binning, perform_viral_binning=perform_viral_binning, perform_viral_annotation=perform_viral_annotation, perform_bacterial_annotation=perform_bacterial_annotation, assembler=assembler, danglen=danglen, min_contig_len=min_contig_len, min_contig_cov=min_contig_cov)
 
     @mcp.tool(name="metagenomic_read_mapping", description="Get parameters from get_service_info tool.")
-    def submit_metagenomic_read_mapping_app(token: Optional[str] = None, gene_set_type: str = None, gene_set_name: str = None, gene_set_fasta: str = None, gene_set_feature_group: str = None, paired_end_libs: Dict = None, single_end_libs: Dict = None, srr_ids: str = None, output_path: str = None, output_file: str = None) -> str:
+    def submit_metagenomic_read_mapping_app(token: Optional[str] = None, gene_set_type: str = None, gene_set_name: str = None, gene_set_fasta: str = None, gene_set_feature_group: str = None, paired_end_libs: List[Dict] = None, single_end_libs: List[Dict] = None, srr_ids: List[str] = None, output_path: str = None, output_file: str = None) -> str:
         # Get the appropriate token
         auth_token = token_provider.get_token(token)
         if not auth_token:

@@ -30,6 +30,10 @@ except Exception:
     class AccessToken(dict):  # type: ignore
         pass
 
+# Token expiration constants
+ACCESS_TOKEN_EXPIRES_IN_SECONDS = 3600  # 1 hour
+AUTHORIZATION_CODE_EXPIRES_IN_SECONDS = 600  # 10 minutes
+
 class BvbrcOAuthProvider(AuthProvider):
     """
     Minimal custom OAuth provider for BV-BRC that implements the same behavioral logic
@@ -71,7 +75,7 @@ class BvbrcOAuthProvider(AuthProvider):
                 if auth_code_data.get("user_token") == token:
                     token_info = {
                         "username": auth_code_data.get("username"),
-                        "issued_at": auth_code_data.get("expires_at", time.time()) - 600,
+                        "issued_at": auth_code_data.get("expires_at", time.time()) - AUTHORIZATION_CODE_EXPIRES_IN_SECONDS,
                     }
                     print(f"[TOKEN VERIFICATION] Token found in legacy storage. Token: {token}, Username: {token_info.get('username')}", file=sys.stderr)
                     break
@@ -113,7 +117,7 @@ class BvbrcOAuthProvider(AuthProvider):
                     
                     token_info = {
                         "username": username,
-                        "issued_at": time.time() - 3600,  # Assume issued 1 hour ago
+                        "issued_at": time.time() - ACCESS_TOKEN_EXPIRES_IN_SECONDS,  # Assume issued 1 hour ago
                     }
                     print(f"[TOKEN VERIFICATION] PATRIC token parsed successfully. Username: {username}, Expiry: {expiry}", file=sys.stderr)
                 except Exception as e:
@@ -149,7 +153,7 @@ class BvbrcOAuthProvider(AuthProvider):
             token=token,
             client_id="bvbrc-public-client",
             scopes=["profile", "token"],
-            expires_at=int(time.time()) + 3600,
+            expires_at=int(time.time()) + ACCESS_TOKEN_EXPIRES_IN_SECONDS,
         )
 
     # --- Helper methods ---
@@ -715,7 +719,7 @@ async def oauth2_login(request, authentication_url: str):
             "scope": scope,
             "user_token": user_token,
             "username": username,
-            "expires_at": time.time() + 600,  # 10 minutes
+            "expires_at": time.time() + AUTHORIZATION_CODE_EXPIRES_IN_SECONDS,
             "used": False
         }
         
@@ -889,7 +893,7 @@ async def oauth2_token(request, provider: Optional[Any] = None):
         token_response = {
             "access_token": user_token,
             "token_type": "Bearer",
-            "expires_in": 3600,  # 1 hour
+            "expires_in": ACCESS_TOKEN_EXPIRES_IN_SECONDS,
             "scope": stored_scope
         }
 

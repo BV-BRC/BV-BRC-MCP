@@ -4,6 +4,7 @@ import requests
 import os
 import json
 import sys
+import base64
 
 def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str) -> List[str]:
     """
@@ -119,7 +120,7 @@ def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> st
         return [f"Error getting file metadata: {str(e)}"]
 
 
-def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_file: str = None) -> str:
+def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_file: str = None, return_data: bool = False) -> str:
     """
     Download a file from the workspace using the JSON-RPC API.
     
@@ -127,9 +128,14 @@ def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_fi
         api: JsonRpcCaller instance configured with workspace URL and token
         path: Path to the file to download
         token: Authentication token for API calls
-        output_file: Name and path of the file to save the downloaded content to.
+        output_file: Optional name and path of the file to save the downloaded content to.
+        return_data: If True, return the file data directly (base64 encoded for binary files, text for text files).
+                    If False and output_file is provided, only write to file. If False and output_file is None,
+                    returns file data (default behavior for backward compatibility).
     Returns:
-        String representation of the downloaded file
+        If return_data is True or output_file is None: Returns file data (base64 encoded for binary, text for text files).
+        If output_file is provided and return_data is False: Returns success message.
+        If both output_file and return_data are True: Returns file data along with success message.
     """
     try:
         download_url_obj = _get_download_url(api, path, token)
@@ -142,12 +148,33 @@ def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_fi
         response = requests.get(download_url, headers=headers)
         response.raise_for_status()
 
+        result_parts = []
+        
+        # Write to file if output_file is provided
         if output_file:
             with open(output_file, 'wb') as file:
                 file.write(response.content)
-            return f"File downloaded and saved to {output_file}"
+            result_parts.append(f"File downloaded and saved to {output_file}")
+        
+        # Return data if return_data is True, or if output_file is None (backward compatibility)
+        if return_data or output_file is None:
+            # Try to decode as text first
+            try:
+                text_content = response.content.decode('utf-8')
+                result_parts.append(text_content)
+            except UnicodeDecodeError:
+                # If it's binary, encode as base64
+                base64_content = base64.b64encode(response.content).decode('utf-8')
+                result_parts.append(f"<base64_encoded_data>{base64_content}</base64_encoded_data>")
+        
+        # Return appropriate result
+        if len(result_parts) == 1:
+            return result_parts[0]
+        elif len(result_parts) == 2:
+            # Both file write and data return
+            return f"{result_parts[0]}\n\nFile data:\n{result_parts[1]}"
         else:
-            return response.content
+            return response.content  # Fallback to original behavior
     except Exception as e:
         return [f"Error downloading file: {str(e)}"]
 

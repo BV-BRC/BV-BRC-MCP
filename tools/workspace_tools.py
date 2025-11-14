@@ -180,13 +180,17 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         return str(result)
 
     @mcp.tool()
-    def workspace_download_file_tool(token: Optional[str] = None, path: str = None, output_file: str = None) -> str:
+    def workspace_download_file_tool(token: Optional[str] = None, path: str = None, output_file: Optional[str] = None, return_data: bool = False) -> str:
         """Download a file from the workspace.
 
         Args:
             token: Authentication token (optional - will use default if not provided)
             path: Path to the file to download (relative to user's home directory).
-            output_file: Name and path of the file to save the downloaded content to.
+            output_file: Optional name and path of the file to save the downloaded content to.
+                        If not provided and return_data is False, file data will be returned directly.
+            return_data: If True, return the file data directly (base64 encoded for binary files, text for text files).
+                        If False and output_file is provided, only write to file. If False and output_file is None,
+                        returns file data (default behavior).
         """
         # Get the appropriate token
         auth_token = token_provider.get_token(token)
@@ -197,9 +201,9 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         user_id = extract_userid_from_token(auth_token)
         resolved_path = resolve_relative_path(path, user_id)
 
-        print(f"Downloading file from path: {resolved_path}, user_id: {user_id}")
+        print(f"Downloading file from path: {resolved_path}, user_id: {user_id}, output_file: {output_file}, return_data: {return_data}")
 
-        result = workspace_download_file(api, resolved_path, auth_token, output_file)
+        result = workspace_download_file(api, resolved_path, auth_token, output_file, return_data)
         return str(result)
 
     @mcp.tool()
