@@ -6,37 +6,70 @@ import json
 import sys
 import base64
 
-def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str) -> List[str]:
+def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: str | List[str] = None) -> List[str]:
     """
-    List workspace contents using the JSON-RPC API.
-    
+    List the contents of a specific workspace directory using the JSON-RPC API.
+    This is NOT a generic search function, use `workspace_search` for search functionality.
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         paths: List of paths to list
         token: Authentication token for API calls
+        file_type: Optional file type(s) to filter by. Can be a string or list of strings
+                   (e.g., 'contigs', 'folder', 'unspecified', 'genome_group', 'feature_group', 'reads').
+                   If provided, only files/objects with these types will be returned.
     Returns:
         List of workspace items
     """
     try:
-        result = api.call("Workspace.ls", {
-            "Recursive": False,
-            "includeSubDirs": False,
-            "paths": paths
-        },1, token)
+        # Build API call parameters
+        # Enable recursive search when file_type is provided to search subdirectories
+        if file_types:
+            # Convert single string to list if needed
+            if isinstance(file_types, str):
+                file_types_list = [file_types]
+            else:
+                file_types_list = file_types
+
+            # Use recursive search format matching workspace_search when filtering by type
+            # Pass type as array directly (API expects array format for type filtering)
+            api_params = {
+                "recursive": True,
+                "includeSubDirs": True,
+                "excludeDirectories": False,
+                "excludeObjects": False,
+                "paths": paths,
+                "query": {
+                    "type": file_types_list
+                }
+            }
+        else:
+            # Non-recursive listing when no file_type filter
+            api_params = {
+                "Recursive": False,
+                "includeSubDirs": False,
+                "paths": paths
+            }
+        print(f"workspace_ls file_types: {file_types}, file_types_list: {file_types_list}, Query params: {json.dumps(api_params, indent=2)}", file=sys.stderr)
+        result = api.call("Workspace.ls", api_params, 1, token)
         return result
     except Exception as e:
         return [f"Error listing workspace: {str(e)}"]
 
-def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: str = None, file_extension: str = None, token: str = None) -> str:
+def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: str = None, file_extension: str = None, file_types: str | List[str] = None, token: str = None) -> str:
     """
-    Search the workspace for a given term and/or file extension.
-    
+    Search the entire workspace for a given term and/or file extension and/or file type.
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         paths: List of paths to search
         search_term: Optional term to search for in file names
-        file_extension: Optional file extension to filter by (e.g., 'py', 'txt', 'json'). 
+        file_extension: Optional file extension to filter by (e.g., 'py', 'txt', 'json').
                        Can include or exclude the leading dot.
+        file_types: Optional file type(s) to filter by. Can be a string or list of strings
+                   (e.g., 'contigs', 'folder', 'unspecified', 'genome_group', 'feature_group', 'reads').
+                   If provided, only files/objects with these types will be returned. This filters by the workspace object type,
+                   not by file extension, so it can match files with different extensions that share the same type.
         token: Authentication token for API calls
     Returns:
         List of matching workspace items
@@ -46,15 +79,15 @@ def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: s
         if not user_id:
             return [f"Error searching workspace: unable to derive user id from token"]
         paths = [f"/{user_id}/home"]
-    
-    # At least one of search_term or file_extension must be provided
-    if not search_term and not file_extension:
-        return [f"Error searching workspace: at least one of search_term or file_extension parameter is required"]
-    
+
+    # At least one of search_term, file_extension, or file_types must be provided
+    if not search_term and not file_extension and not file_types:
+        return [f"Error searching workspace: at least one of search_term, file_extension, or file_types parameter is required"]
+
     # Build query conditions based on what's provided
     query_conditions = {}
     conditions = []
-    
+
     # Add search term condition if provided
     if search_term:
         conditions.append({
@@ -63,7 +96,7 @@ def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: s
                 "$options": "i"
             }
         })
-    
+
     # Add file extension filter if provided
     if file_extension:
         # Normalize extension: remove leading dot if present, add it back for regex
@@ -77,7 +110,25 @@ def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: s
                 "$options": "i"
             }
         })
-    
+
+    # Add file type filter if provided
+    if file_types:
+        # Convert single string to list if needed
+        if isinstance(file_types, str):
+            file_types_list = [file_types]
+        else:
+            file_types_list = file_types
+        
+        # Add type filter condition
+        if len(file_types_list) == 1:
+            conditions.append({
+                "type": file_types_list[0]
+            })
+        else:
+            conditions.append({
+                "type": {"$in": file_types_list}
+            })
+
     # Build final query conditions
     if len(conditions) == 1:
         # Single condition, no need for $and
@@ -85,7 +136,7 @@ def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: s
     else:
         # Multiple conditions, use $and
         query_conditions = {"$and": conditions}
-    
+
     try:
         result = api.call("Workspace.ls", {
             "recursive": True,

@@ -287,3 +287,16 @@ bvbrc-mcp-server/
 ```
 
 </details>
+
+
+<details>
+<summary><h2>Possible Future Endeavours/Features</h2></summary>
+
+## NCBI MCP Server Integration (SRA DB Search)
+[NCBI MCP Server](https://github.com/hamzameer/ncbi-mcp-server)
+
+Integrate this into the current BV-BRC MCP Server so we do not need to re-invent the wheel for SRA searching.
+Requires NCBI account with API key. Follow instructions on GitHub repo to install and run locally.
+Tested on Cursor and working.
+
+</details>

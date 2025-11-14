@@ -2,15 +2,15 @@ The parameters for the blast app are:
   - input_type: Input sequence type - dna/aa (required)
   - input_source: Input source type (required)
   - input_fasta_data: Input sequences in FASTA format (optional)
-  - input_id_list: Input sequence identifiers (optional)
+  - input_id_list: Input sequence identifiers (DEPRICATED)
   - input_fasta_file: Input FASTA file (optional)
   - input_feature_group: Input feature group (optional)
   - input_genome_group: Input genome group (optional)
   - db_type: Database type - faa/ffn/frn/fna (required)
   - db_source: Database source type (required)
-  - db_fasta_data: Database sequences in FASTA format (optional)
+  - db_fasta_data: Database sequences in FASTA format (DEPRICATED)
   - db_fasta_file: Database FASTA file (optional)
-  - db_id_list: Database sequence identifiers (optional)
+  - db_id_list: Database sequence identifiers (DEPRICATED)
   - db_feature_group: Database feature group (optional)
   - db_genome_group: Database genome group (optional)
   - db_genome_list: Database genome list (optional)
@@ -19,10 +19,11 @@ The parameters for the blast app are:
   - blast_program: BLAST program to use (optional)
   - blast_evalue_cutoff: E-value cutoff (default: 1e-5)
   - blast_max_hits: Maximum hits to return (default: 300)
-  - blast_min_coverage: Minimum coverage percentage (optional)
+  - blast_min_coverage: Minimum coverage percentage (DEPRICATED)
   - output_path: Output directory (required)
   - output_file: Output basename (required)
 
-At least one input source (input_fasta_data, input_id_list, input_fasta_file, input_feature_group, or input_genome_group) must be provided.
-At least one database source (db_fasta_data, db_fasta_file, db_id_list, db_feature_group, db_genome_group, db_genome_list, db_taxon_list, or db_precomputed_database) must be provided.
+At least one input source (input_fasta_data, input_fasta_file, input_feature_group, or input_genome_group) must be provided.
+At least one database source (db_fasta_file, db_feature_group, db_genome_group, db_genome_list, db_taxon_list, or db_precomputed_database) must be provided.
+Do not use any 'DEPRICATED' fields, these are only kept in here for historical records or if needed to be enabled again later.
 

@@ -168,7 +168,7 @@ def query_tasks(api: JsonRpcCaller, token: str = None, user_id: str = None, para
         return []
 
 def start_genome_assembly_app(api: JsonRpcCaller, token: str = None, user_id: str = None, paired_end_libs: List[Dict] = None, single_end_libs: List[Dict] = None, srr_ids: List[str] = None, max_bases: int = 10000000000, recipe: str = "auto", racon_iter: int = 2, pilon_iter: int = 2, trim: bool = False, target_depth: int = 200, normalize: bool = False, filtlong: bool = False, genome_size: int = 5000000, min_contig_len: int = 300, min_contig_cov: float = 5.0, output_path: str = None, output_file: str = None, debug: int = 0) -> str:
-    app_name = "GenomeAssembly"
+    app_name = "GenomeAssembly2"
     try:
         # Set default values if not provided
         output_path, output_file = _set_default_output_paths(user_id, app_name, output_path, output_file)
@@ -193,14 +193,14 @@ def start_genome_assembly_app(api: JsonRpcCaller, token: str = None, user_id: st
             "output_file": output_file,
             "debug": debug
         })
-        data = ["GenomeAssembly", params, {}]
+        data = [app_name, params, {}]
         result = api.call("AppService.start_app2", data, _generate_numerical_uuid(), token)
         if isinstance(result, (list, dict)):
             return json.dumps(result, indent=2)
-        return result
+        return str(result)
     except Exception as e:
         print(e)
-        return []
+        return json.dumps({"error": str(e)})
 
 def start_comprehensive_genome_analysis_app(api: JsonRpcCaller, token: str = None, user_id: str = None, input_type: str = None, output_path: str = None, output_file: str = None, paired_end_libs: List[Dict] = None, single_end_libs: List[Dict] = None, srr_ids: List[str] = None, reference_assembly: str = None, recipe: str = "auto", racon_iter: int = 2, pilon_iter: int = 2, trim: bool = False, normalize: bool = False, filtlong: bool = False, target_depth: int = 200, genome_size: int = 5000000, min_contig_len: int = 300, min_contig_cov: float = 5.0, gto: str = None, genbank_file: str = None, contigs: str = None, scientific_name: str = None, taxonomy_id: int = None, code: int = 0, domain: str = "auto", public: bool = False, queue_nowait: bool = False, skip_indexing: bool = False, reference_genome_id: str = None, analyze_quality: bool = None, debug_level: int = 0) -> str:
     app_name = "ComprehensiveGenomeAnalysis"

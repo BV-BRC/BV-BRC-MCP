@@ -74,6 +74,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             appropriate MD5 value to query the feature_sequence table using the md5 field as the key, and extract the
             sequence from the sequence field.
 
+            The "evidence" field in the genome_amr table describes how the resistance determination was made. If the
+            evidence is "Laboratory Method", we have the most confidence, since the determination was confirmed in a laboratory. 
+            "Computational Method" indicates lesser confidence.
+
             In the genome_feature table, whenever possible, the patric_id should be used instead of the feature_id, as
             only the patric_id is made visible to the end user. Patric IDs always begin with "fig|".
 
