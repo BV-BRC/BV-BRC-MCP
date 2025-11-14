@@ -57,7 +57,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             special feature properties like Antibiotic Resistance, Virulence Factor, and Essential Gene is in the
             sp_gene table. To find which features are in a subsystem, use the subsystem_ref table. Use the
             genome_name field to search for an organism by name. Note that antibiotic names are case-sensitive
-            and stored in all lower case (e.g. "methicillin").
+            and stored in all lower case (e.g. "methicillin"). Thus, to ask for all Bacillus subtilis resistant
+            to ampicillin, you would use the filter string
+
+            resistant_phenotype:Resistant AND genome_name:"Bacillus subtilis" AND antibiotic:ampicillin
 
             In the filter string, any field value with spaces in it must be enclosed in double quotes (e.g. "field value").
             
@@ -65,6 +68,14 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             be checked to avoid Bad Request errors.
 
             When countOnly is True, use the minimum number of fields in the select parameter to reduce the number of fields returned.
+
+            To find a DNA or protein sequence for a genome feature, you need to call this method twice, first using the
+            genome_feature table to get the aa_sequence_md5 or na_sequence_md5 for the feature. Then you can use the
+            appropriate MD5 value to query the feature_sequence table using the md5 field as the key, and extract the
+            sequence from the sequence field.
+
+            In the genome_feature table, whenever possible, the patric_id should be used instead of the feature_id, as
+            only the patric_id is made visible to the end user. Patric IDs always begin with "fig|".
 
         Returns:
             JSON string with query results:
@@ -94,7 +105,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         elif collection == "genome_feature" and not re.search(r"\bpatric_id:", filter_str):
             filter_str += " AND patric_id:*"
         # For all queries, we have to make sure the field values with spaces are quoted.
-        filter_list = re.split(r'\s+AND\s+|\s+OR\s+', filter_str)
+        filter_list = re.split(r'\s+AND\s+', filter_str)
         for i, f in enumerate(filter_list):
             match = re.match(r'(\S+):["(](.*)[)"]', f)
             if not match:
@@ -110,7 +121,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             result = query_direct(collection, filter_str, options, _base_url, 
                                  headers=headers, cursorId=cursorId, countOnly=countOnly)
             print(f"Query returned {result['count']} results.")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, sort_keys=True)
         except Exception as e:
             return json.dumps({
                 "error": f"Error querying {collection}: {str(e)}"

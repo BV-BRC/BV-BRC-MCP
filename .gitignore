@@ -6,5 +6,6 @@ bvbrc-python-api/
 mcp_config.json
 *mcpb
 manifest.json
+config/config.json
 logs/*
 logs

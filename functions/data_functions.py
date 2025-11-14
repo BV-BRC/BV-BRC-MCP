@@ -10,7 +10,7 @@ import json
 from typing import Any, Dict, List, Tuple
 from bvbrc_solr_api import create_client, query
 from bvbrc_solr_api.core.solr_http_client import select as solr_select
-CURSOR_BATCH_SIZE = 1000
+CURSOR_BATCH_SIZE = 100
 # Timeout for Solr queries in seconds (default is 60, increase for large queries)
 SOLR_QUERY_TIMEOUT = 300.0  # 5 minutes
 
