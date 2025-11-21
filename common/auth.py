@@ -30,9 +30,15 @@ except Exception:
     class AccessToken(dict):  # type: ignore
         pass
 
-# Token expiration constants
-ACCESS_TOKEN_EXPIRES_IN_SECONDS = 7200  # 2 hours
-AUTHORIZATION_CODE_EXPIRES_IN_SECONDS = 3600  # 1 hour
+# Import configuration
+from common.config import get_config
+
+# Load configuration and set constants
+_config = get_config()
+ACCESS_TOKEN_EXPIRES_IN_SECONDS = _config.oauth.access_token_expires_in_seconds
+AUTHORIZATION_CODE_EXPIRES_IN_SECONDS = _config.oauth.authorization_code_expires_in_seconds
+ALLOWED_CALLBACK_URLS = _config.oauth.allowed_callback_urls
+TRUSTED_CLIENT_IDS = _config.oauth.trusted_client_ids
 
 class BvbrcOAuthProvider(AuthProvider):
     """
@@ -48,10 +54,9 @@ class BvbrcOAuthProvider(AuthProvider):
         self.authentication_url = authentication_url
         # Note: All localhost URLs (localhost, 127.0.0.1, any port) are automatically allowed
         # in addition to the URLs in this list
-        self.allowed_callback_urls = allowed_callback_urls or [
-            "https://chatgpt.com/connector_platform_oauth_redirect",
-            "https://claude.ai/api/mcp/auth_callback"
-        ]
+        # Use provided callback URLs or fall back to config
+        config = get_config()
+        self.allowed_callback_urls = allowed_callback_urls or config.oauth.allowed_callback_urls
         # Track issued tokens for validation (token -> username)
         self.issued_tokens: Dict[str, Dict[str, Any]] = {}
 
@@ -224,10 +229,6 @@ class BvbrcOAuthProvider(AuthProvider):
 # Backward-compatible module-level stores for legacy function usage
 registered_clients: Dict[str, Dict[str, Any]] = {}
 authorization_codes: Dict[str, Dict[str, Any]] = {}
-ALLOWED_CALLBACK_URLS = [
-    "https://chatgpt.com/connector_platform_oauth_redirect",
-    "https://claude.ai/api/mcp/auth_callback"
-]
 
 def is_localhost_url(url: str) -> bool:
     """
@@ -243,6 +244,48 @@ def is_localhost_url(url: str) -> bool:
 def get_registered_client(client_id: str) -> dict | None:
     """Legacy helper used by module-level endpoints."""
     return registered_clients.get(client_id)
+
+def can_auto_register(client_id: str) -> bool:
+    """
+    Check if a client_id is allowed to auto-register.
+    
+    Returns:
+        True if auto-registration is allowed for this client_id
+        False if auto-registration is disabled or client_id is not trusted
+    """
+    if TRUSTED_CLIENT_IDS is None:
+        # Auto-registration disabled - must use /oauth2/register endpoint
+        return False
+    elif TRUSTED_CLIENT_IDS == []:
+        # Empty list means allow all (current behavior)
+        return True
+    else:
+        # Only allow if client_id is in trusted list
+        return client_id in TRUSTED_CLIENT_IDS
+
+def auto_register_client(client_id: str, redirect_uri: str, scope: str = "") -> dict:
+    """
+    Automatically register a client with the given client_id and redirect_uri.
+    This is used when an unregistered client_id is provided during OAuth flow.
+    
+    Note: Only call this if can_auto_register(client_id) returns True.
+    """
+    client_data = {
+        "client_id": client_id,
+        "client_id_issued_at": int(time.time()),
+        "redirect_uris": [redirect_uri],
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "client_name": client_id,  # Use client_id as default name
+        "scope": scope,
+    }
+    
+    registered_clients[client_id] = client_data
+    print(f"Auto-registered client: {client_id} with redirect_uri: {redirect_uri}")
+    print(f"Total registered clients: {len(registered_clients)}")
+    
+    return client_data
 
 def openid_configuration(request, openid_config_url: str) -> JSONResponse:
     """
@@ -383,14 +426,6 @@ async def oauth2_authorize(request, authentication_url: str):
             status_code=400
         )
     
-    # Validate client exists
-    client = get_registered_client(client_id)
-    if not client:
-        return JSONResponse(
-            content={"error": "invalid_client", "error_description": "Client not found"},
-            status_code=400
-        )
-    
     # Validate redirect_uri is whitelisted (allow localhost URLs or URLs in allowed list)
     if redirect_uri not in ALLOWED_CALLBACK_URLS and not is_localhost_url(redirect_uri):
         return JSONResponse(
@@ -401,14 +436,31 @@ async def oauth2_authorize(request, authentication_url: str):
             status_code=400
         )
     
-    # Validate redirect_uri matches registered URIs
-    if redirect_uri not in client.get("redirect_uris", []):
-        return JSONResponse(
-            content={"error": "invalid_request", "error_description": "redirect_uri does not match registered URIs"},
-            status_code=400
-        )
+    # Check if client exists, if not, check if auto-registration is allowed
+    client = get_registered_client(client_id)
+    if not client:
+        if can_auto_register(client_id):
+            print(f"Client '{client_id}' not found, auto-registering...")
+            client = auto_register_client(client_id, redirect_uri, scope)
+        else:
+            # Auto-registration not allowed for this client
+            return JSONResponse(
+                content={
+                    "error": "invalid_client",
+                    "error_description": f"Client '{client_id}' is not registered. Please register via /mcp/oauth2/register endpoint first."
+                },
+                status_code=400
+            )
     
-    print(f"Authorizing client: {client.get('client_name', client_id)}")
+    # Validate redirect_uri matches registered URIs
+    # If redirect_uri is not in the registered list, add it
+    if redirect_uri not in client.get("redirect_uris", []):
+        client["redirect_uris"].append(redirect_uri)
+        print(f"Added redirect_uri '{redirect_uri}' to client '{client_id}' registered URIs")
+    
+    # Log client info (use client_name if available, otherwise just client_id)
+    client_name = client.get('client_name', client_id) if client else client_id
+    print(f"Authorizing client: {client_name}")
     print(f"Redirect URI: {redirect_uri}")
     print(f"Code challenge: {code_challenge}")
     
@@ -563,7 +615,7 @@ async def oauth2_authorize(request, authentication_url: str):
             <p class="subtitle">Authorize access to your BV-BRC MCP Resources</p>
             
             <div class="client-info">
-                <p><strong>Application:</strong> {client.get('client_name', 'ChatGPT')}</p>
+                <p><strong>Application:</strong> {client.get('client_name', 'ChatGPT') if client else 'ChatGPT'}</p>
                 <p><strong>Scopes:</strong> {scope or 'profile, token'}</p>
             </div>
             
@@ -799,20 +851,41 @@ async def oauth2_token(request, provider: Optional[Any] = None):
                 status_code=400
             )
         
-        # Validate client exists
-        client = get_registered_client(client_id)
-        if not client:
+        # Validate redirect_uri is whitelisted (allow localhost URLs or URLs in allowed list)
+        if redirect_uri not in ALLOWED_CALLBACK_URLS and not is_localhost_url(redirect_uri):
             return JSONResponse(
-                content={"error": "invalid_client", "error_description": "Client not found"},
+                content={
+                    "error": "invalid_request",
+                    "error_description": f"redirect_uri '{redirect_uri}' is not whitelisted. Allowed: {ALLOWED_CALLBACK_URLS} or any localhost URL"
+                },
                 status_code=400
             )
         
+        # Check if client exists, if not, check if auto-registration is allowed
+        client = get_registered_client(client_id)
+        if not client:
+            if can_auto_register(client_id):
+                print(f"Client '{client_id}' not found during token exchange, auto-registering...")
+                # Get scope from authorization code if available
+                scope = ""
+                if code and code in authorization_codes:
+                    scope = authorization_codes[code].get("scope", "")
+                client = auto_register_client(client_id, redirect_uri, scope)
+            else:
+                # Auto-registration not allowed for this client
+                return JSONResponse(
+                    content={
+                        "error": "invalid_client",
+                        "error_description": f"Client '{client_id}' is not registered. Please register via /mcp/oauth2/register endpoint first."
+                    },
+                    status_code=400
+                )
+        
         # Validate redirect_uri matches registered URIs
+        # If redirect_uri is not in the registered list, add it
         if redirect_uri not in client.get("redirect_uris", []):
-            return JSONResponse(
-                content={"error": "invalid_request", "error_description": "redirect_uri does not match registered URIs"},
-                status_code=400
-            )
+            client["redirect_uris"].append(redirect_uri)
+            print(f"Added redirect_uri '{redirect_uri}' to client '{client_id}' registered URIs")
         
         # Validate authorization code exists
         if code not in authorization_codes:

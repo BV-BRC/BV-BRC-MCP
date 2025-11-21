@@ -12,24 +12,22 @@ from tools.service_tools import register_service_tools
 from tools.workspace_tools import register_workspace_tools
 from common.token_provider import TokenProvider
 from starlette.responses import JSONResponse, HTMLResponse, RedirectResponse
-import json
 import sys
-import os
 from common.auth import BvbrcOAuthProvider
+from common.config import get_config
 
 # Load configuration
-with open("config/config.json", "r") as f:
-    config = json.load(f)
+config = get_config()
 
 # Get configuration values
-base_url = config.get("base_url", "https://www.bv-brc.org/api-bulk")
-workspace_api_url = config.get("workspace_url", "https://p3.theseed.org/services/Workspace")
-service_api_url = config.get("service_api_url", "https://p3.theseed.org/services/app_service")
-similar_genome_finder_api_url = config.get("similar_genome_finder_api_url", service_api_url)
-authentication_url = config.get("authentication_url", "https://user.patricbrc.org/authenticate")
-openid_config_url = config.get("openid_config_url", "https://dev-7.bv-brc.org")
-port = int(os.environ.get("PORT", config.get("port", 12010)))
-mcp_url = config.get("mcp_url", "127.0.0.1")
+base_url = config.base_url
+workspace_api_url = config.workspace_url
+service_api_url = config.service_api_url
+similar_genome_finder_api_url = config.similar_genome_finder_api_url
+authentication_url = config.authentication_url
+openid_config_url = config.openid_config_url
+port = config.port
+mcp_url = config.mcp_url
 
 # Initialize token provider for HTTP mode
 token_provider = TokenProvider(mode="http")
@@ -40,9 +38,8 @@ service_api = JsonRpcCaller(service_api_url)
 similar_genome_finder_api = JsonRpcCaller(similar_genome_finder_api_url)
 
 # Publicly reachable server URL for discovery and metadata
-# Use PUBLIC_BASE_URL env var if set, otherwise construct from openid_config_url
 # The server URL is where this MCP server is accessible, not the data API URL
-server_url = os.environ.get("PUBLIC_BASE_URL") or openid_config_url
+server_url = config.server_url
 
 # Initialize OAuth provider (class-based) with server URL (not data API base_url)
 oauth = BvbrcOAuthProvider(

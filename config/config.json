@@ -6,5 +6,14 @@
     "authentication_url": "https://user.patricbrc.org/authenticate",
     "openid_config_url": "https://dev-7.bv-brc.org",
     "mcp_url": "140.221.78.67",
-    "port":12007
+    "port": 12007,
+    "oauth": {
+        "allowed_callback_urls": [
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+            "https://claude.ai/api/mcp/auth_callback"
+        ],
+        "trusted_client_ids": ["chatgpt", "claude"],
+        "access_token_expires_in_seconds": 7200,
+        "authorization_code_expires_in_seconds": 3600
+    }
 }
