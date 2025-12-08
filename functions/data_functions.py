@@ -6,8 +6,9 @@ Combines mvp_functions and common_functions from the data-mcp-server.
 """
 
 import os
+import re
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 from bvbrc_solr_api import create_client, query
 from bvbrc_solr_api.core.solr_http_client import select as solr_select
 CURSOR_BATCH_SIZE = 100
@@ -124,6 +125,114 @@ def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None
     }
 
 
+# Helper utilities shared by MCP tools
+def normalize_select(sel: Any) -> Optional[List[str]]:
+    if sel is None:
+        return None
+    if isinstance(sel, str):
+        return [part.strip() for part in sel.split(",") if part.strip()]
+    if isinstance(sel, list):
+        return [str(item).strip() for item in sel if str(item).strip()]
+    raise ValueError("select must be a comma-separated string or list of fields")
+
+
+def normalize_sort(srt: Any) -> Optional[str]:
+    if srt is None:
+        return None
+    if isinstance(srt, str):
+        return srt
+    if isinstance(srt, list):
+        parts: List[str] = []
+        for item in srt:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and "field" in item:
+                direction = item.get("dir", "asc").lower()
+                dir_token = "desc" if direction == "desc" else "asc"
+                parts.append(f"{item['field']} {dir_token}")
+        return ", ".join(parts) if parts else None
+    raise ValueError("sort must be a string or list of sort entries")
+
+
+def quote_value(val: Any, allow_wildcards: bool = False) -> str:
+    if val is None:
+        return '""'
+    if isinstance(val, bool):
+        return str(val).lower()
+    if isinstance(val, (int, float)):
+        return str(val)
+    s = str(val)
+    s = s.replace('"', '\\"')
+    if allow_wildcards:
+        # Preserve * characters; escape spaces to avoid breaking the pattern.
+        s = s.replace(" ", r"\ ")
+        return s
+    s = s.replace("*", "\\*")
+    if re.search(r"\s|[:()]", s):
+        return f'"{s}"'
+    return s
+
+
+def build_leaf(field: str, op: str, value: Any) -> str:
+    op = op.lower()
+    if op == "eq":
+        return f"{field}:{quote_value(value)}"
+    if op == "neq":
+        return f"-{field}:{quote_value(value)}"
+    if op == "lt":
+        return f"{field}:{{* TO {quote_value(value)}}}"
+    if op == "lte":
+        return f"{field}:[* TO {quote_value(value)}]"
+    if op == "gt":
+        return f"{field}:{{{quote_value(value)} TO *}}"
+    if op == "gte":
+        return f"{field}:[{quote_value(value)} TO *]"
+    if op == "between":
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError("between op requires [min, max]")
+        return f"{field}:[{quote_value(value[0])} TO {quote_value(value[1])}]"
+    if op == "in":
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("in op requires a list of values")
+        terms = [f"{field}:{quote_value(v)}" for v in value]
+        return "(" + " OR ".join(terms) + ")" if terms else "*:*"
+    if op == "contains":
+        return f"{field}:*{quote_value(value, allow_wildcards=True)}*"
+    if op == "startswith":
+        return f"{field}:{quote_value(value, allow_wildcards=True)}*"
+    if op == "endswith":
+        return f"{field}:*{quote_value(value, allow_wildcards=True)}"
+    if op == "exists":
+        return f"{field}:*"
+    if op == "missing":
+        return f"-{field}:*"
+    if op in ("wildcard", "matches"):
+        return f"{field}:{quote_value(value, allow_wildcards=True)}"
+    raise ValueError(f"Unsupported operator: {op}")
+
+
+def build_filter(expr: Any) -> str:
+    if not expr:
+        return "*:*"
+    if isinstance(expr, dict) and "filters" in expr:
+        logic = expr.get("logic", "and").lower()
+        joiner = " AND " if logic == "and" else " OR "
+        built = [build_filter(item) for item in expr.get("filters", []) if item is not None]
+        if not built:
+            return "*:*"
+        if len(built) == 1:
+            return built[0]
+        return "(" + joiner.join(built) + ")"
+    if isinstance(expr, dict):
+        field = expr.get("field")
+        op = expr.get("op", "eq")
+        value = expr.get("value")
+        if not field:
+            raise ValueError("filter leaf requires a 'field'")
+        return build_leaf(field, op, value)
+    raise ValueError("filters must be a dict with filters or leaf conditions")
+
+
 def format_query_result(result: List[Dict[str, Any]], max_items: int = 10) -> str:
     """
     Format query result for display.
@@ -198,48 +307,40 @@ def query_info() -> str:
     """
     return """BV-BRC Query Tool Instructions
 
-            BASIC QUERY PARAMETERS:
-            - filter_str: Solr query expression for filtering results
-            Examples: 
-                - field_name:value - exact match
-                - field_name:"value" - exact match with quotes for strings
-                - field_name:[value1 TO value2] - range query
-                - field_name:*value* - wildcard search
-                - field_name:value1 OR field_name:value2 - OR logic
-                - field_name:value1 AND field_name:value2 - AND logic
-                - -field_name:value - NOT logic (exclude)
+            STRUCTURED FILTERS (no Solr syntax needed):
+            filters = {
+              "logic": "and" | "or",           # optional, defaults to "and"
+              "filters": [
+                { "field": "genome_name", "op": "eq", "value": "Escherichia coli" },
+                { "field": "antibiotic", "op": "eq", "value": "ampicillin" },
+                { "logic": "or", "filters": [
+                    { "field": "resistant_phenotype", "op": "eq", "value": "Resistant" },
+                    { "field": "resistant_phenotype", "op": "eq", "value": "Intermediate" }
+                  ]
+                }
+              ]
+            }
 
-            - select: Comma-separated list of fields to return
-            Example: "genome_id,genome_name,species,strain"
-            Note: Use field names exactly as they appear in the schema
+            SUPPORTED OPERATORS:
+            - eq / neq: exact match / not equal
+            - lt / lte / gt / gte: range bounds
+            - between: inclusive range [min, max] (value is [min, max])
+            - in: list membership (value is list)
+            - contains / startswith / endswith: wildcard text matching
+            - exists / missing: field presence/absence
+            - wildcard / matches: raw wildcard pattern
 
-            - sort: Field name to sort by (optional)
-            Example: "genome_name" or "date_inserted"
-            For descending order, use negative: "-genome_name"
+            SELECT:
+            - Provide a comma string or list of fields.
 
-            QUERY EXAMPLES:
-            1. Find genomes by species: species:"Escherichia coli"
-            2. Find genomes with specific strain: strain:*K-12*
-            3. Get recent entries: date_inserted:[2023-01-01 TO *]
-            4. Multiple conditions: species:"Escherichia coli" AND strain:*K-12*
-            5. Select specific fields: select="genome_id,genome_name,species,strain"
-            6. Sort results: sort="genome_name"
-            7. Exclude specific values: -species:"test"
-
-            FIELD TYPES:
-            - string: Text values (use quotes for exact matches)
-            - integer: Numeric values (no quotes)
-            - date: Date values in YYYY-MM-DD format
-            - boolean: true/false (no quotes)
-            - wildcard: Use * for partial matches
+            SORT:
+            - Provide a single string (e.g., "genome_name asc") or
+              a list of { "field": "...", "dir": "asc|desc" }.
 
             TIPS:
-            - Use * for wildcard searches
-            - Use quotes for exact string matches
-            - Use [value1 TO value2] for range queries
-            - Combine conditions with AND/OR
-            - Check available fields in collection-specific parameters
-            - Use select to return only needed fields for better performance"""
+            - Use solr_collection_parameters to discover valid fields per collection.
+            - Keep filters minimal when countOnly is True to reduce payload.
+            - genome_feature queries automatically constrain to patric_id:*."""
 
 
 def list_solr_collections() -> str:

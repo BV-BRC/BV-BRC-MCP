@@ -6,8 +6,7 @@ This module contains MCP tools for querying MVP (Minimum Viable Product) data fr
 """
 
 import json
-import re
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, List
 
 from fastmcp import FastMCP
 
@@ -19,7 +18,10 @@ from functions.data_functions import (
     query_direct,
     lookup_parameters,
     query_info,
-    list_solr_collections
+    list_solr_collections,
+    normalize_select,
+    normalize_sort,
+    build_filter
 )
 
 
@@ -37,92 +39,78 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
     _token_provider = token_provider
 
     @mcp.tool(annotations={"readOnlyHint": True})
-    def query_collection(collection: str, filter_str: str = "",
-                          select: Optional[str] = None, sort: Optional[str] = None,
-                          cursorId: Optional[str] = None, countOnly: bool = False,
+    def query_collection(collection: str,
+                          filters: Optional[Dict[str, Any]] = None,
+                          select: Optional[Any] = None,
+                          sort: Optional[Any] = None,
+                          cursorId: Optional[str] = None,
+                          countOnly: bool = False,
                           token: Optional[str] = None) -> str:
         """
-        Query BV-BRC data directly using collection name and Solr query expression.
+        Query BV-BRC data with structured filters; Solr syntax is handled for you.
         
         Args:
-            collection: The collection name (e.g., "genome", "genome_feature")
-            filter_str: Solr query expression (e.g., "genome_id:123.45" or "species:\"Escherichia coli\"")
-            select: Comma-separated list of fields to select (optional)
-            sort: Field to sort by (optional)
-            cursorId: Cursor ID for pagination (optional, use "*" or omit for first page)
-            countOnly: If True, only return the total count without data (optional, default False)
-            token: Authentication token for API access (optional, will be auto-detected if token_provider is configured)
+            collection: Collection name (e.g., "genome", "genome_feature").
+            filters: Structured filter object describing conditions and grouping.
+                Format:
+                {
+                  "logic": "and" | "or",   # optional, defaults to "and"
+                  "filters": [
+                    { "field": "genome_name", "op": "eq", "value": "Escherichia coli" },
+                    { "field": "antibiotic", "op": "eq", "value": "ampicillin" },
+                    { "logic": "or", "filters": [
+                        { "field": "resistant_phenotype", "op": "eq", "value": "Resistant" },
+                        { "field": "resistant_phenotype", "op": "eq", "value": "Intermediate" }
+                      ]
+                    }
+                  ]
+                }
+            select: List of fields or comma-separated string (optional).
+            sort: Sort string (e.g., "genome_name asc") or list of
+                { "field": "...", "dir": "asc|desc" } entries (optional).
+            cursorId: Cursor ID for pagination ("*" or omit for first page).
+            countOnly: If True, only return the total count without data.
+            token: Authentication token (optional, auto-detected if token_provider is configured).
 
-        Notes: Information on genome resistance to antibiotics is in the genome_amr table. Information on
-            special feature properties like Antibiotic Resistance, Virulence Factor, and Essential Gene is in the
-            sp_gene table. To find which features are in a subsystem, use the subsystem_ref table. Use the
-            genome_name field to search for an organism by name. Note that antibiotic names are case-sensitive
-            and stored in all lower case (e.g. "methicillin"). Thus, to ask for all Bacillus subtilis resistant
-            to ampicillin, you would use the filter string
-
-            resistant_phenotype:Resistant AND genome_name:"Bacillus subtilis" AND antibiotic:ampicillin
-
-            In the filter string, any field value with spaces in it must be enclosed in double quotes (e.g. "field value").
-            
-            The solr_collection_parameters tool lists all the field names for each collection. This tool should
-            be checked to avoid Bad Request errors.
-
-            When countOnly is True, use the minimum number of fields in the select parameter to reduce the number of fields returned.
-
-            To find a DNA or protein sequence for a genome feature, you need to call this method twice, first using the
-            genome_feature table to get the aa_sequence_md5 or na_sequence_md5 for the feature. Then you can use the
-            appropriate MD5 value to query the feature_sequence table using the md5 field as the key, and extract the
-            sequence from the sequence field.
-
-            The "evidence" field in the genome_amr table describes how the resistance determination was made. If the
-            evidence is "Laboratory Method", we have the most confidence, since the determination was confirmed in a laboratory. 
-            "Computational Method" indicates lesser confidence.
-
-            In the genome_feature table, whenever possible, the patric_id should be used instead of the feature_id, as
-            only the patric_id is made visible to the end user. Patric IDs always begin with "fig|".
-
-            Always use the solr_collection_parameters tool to get the parameters for a given collection before using this tool.
+        Notes: Use `solr_collection_parameters` to discover available fields. The tool
+            automatically applies collection-specific defaults (e.g., patric-only features).
 
         Returns:
-            JSON string with query results:
-            - If countOnly is True: {"count": <total_count>}
-            - Otherwise: {"count": <batch_count>, "results": [...], "nextCursorId": <str|None>}
+            JSON string:
+            - If countOnly is True: {"count": <total_count>, "source": "bvbrc-mcp-data"}
+            - Otherwise: {"count": <batch_count>, "results": [...], "nextCursorId": <str|None>, "source": "bvbrc-mcp-data"}
         """
+
         print(f"Querying collection: {collection}, count flag = {countOnly}.")
-        options = {}
-        if select:
-            options["select"] = select.split(",")
-        if sort:
-            options["sort"] = sort
+        options: Dict[str, Any] = {}
+        select_fields = normalize_select(select)
+        sort_expr = normalize_sort(sort)
+        if select_fields:
+            options["select"] = select_fields
+        if sort_expr:
+            options["sort"] = sort_expr
         
-        # Get authentication token and build headers
+        # Build Solr query from structured filters
+        filter_str = build_filter(filters)
+
+        # Apply collection-specific defaults
+        if collection == "genome_feature":
+            auto = "patric_id:*"
+            if filter_str and filter_str != "*:*":
+                filter_str = f"({filter_str}) AND {auto}"
+            else:
+                filter_str = auto
+
+        # Authentication headers
         headers: Optional[Dict[str, str]] = None
         if _token_provider:
             auth_token = _token_provider.get_token(token)
             if auth_token:
                 headers = {"Authorization": auth_token}
         elif token:
-            # Fallback: if token is provided directly and no token_provider, use it
             headers = {"Authorization": token}
-
-        # If we have a genome_feature query, we need to insure only patric features come back.
-        if collection == "genome_feature" and not filter_str:
-            filter_str = "patric_id:*"
-        elif collection == "genome_feature" and not re.search(r"\bpatric_id:", filter_str):
-            filter_str += " AND patric_id:*"
-        # For all queries, we have to make sure the field values with spaces are quoted.
-        filter_list = re.split(r'\s+AND\s+', filter_str)
-        for i, f in enumerate(filter_list):
-            match = re.match(r'(\S+):["(](.*)[)"]', f)
-            if not match:
-                match = re.match(r'(\S+):(.+)', f)
-                if match:
-                    field, value = match.groups()
-                    if ' ' in value:
-                        filter_list[i] = f'{field}:"{value}"'
-        filter_str = ' AND '.join(filter_list)
-        print(f"Filter is {filter_str}")
         
+        print(f"Filter is {filter_str}")
         try:
             result = query_direct(collection, filter_str, options, _base_url, 
                                  headers=headers, cursorId=cursorId, countOnly=countOnly)
