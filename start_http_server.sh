@@ -1,3 +1,3 @@
 #!/bin/bash
 source mcp_env/bin/activate
-python3 http_server.py
+PORT=$(jq -r '.port' config/config.json) python3 http_server.py

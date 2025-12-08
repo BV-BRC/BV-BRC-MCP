@@ -127,6 +127,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             result = query_direct(collection, filter_str, options, _base_url, 
                                  headers=headers, cursorId=cursorId, countOnly=countOnly)
             print(f"Query returned {result['count']} results.")
+            
+            # Add 'source' field to the top-level response
+            result['source'] = 'bvbrc-mcp-data'
+            
             return json.dumps(result, indent=2, sort_keys=True)
         except Exception as e:
             return json.dumps({
