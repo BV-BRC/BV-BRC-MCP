@@ -27,7 +27,7 @@ def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: s
         if file_types:
             # Convert single string to list if needed
             if file_types == None:
-                file_types_list = []
+                file_types_list = ['unspecified']
             elif isinstance(file_types, str):
                 file_types_list = [file_types]
             else:
