@@ -26,7 +26,9 @@ def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: s
         # Enable recursive search when file_type is provided to search subdirectories
         if file_types:
             # Convert single string to list if needed
-            if isinstance(file_types, str):
+            if not file_types:
+                file_types_list = ['unspecified']
+            elif isinstance(file_types, str):
                 file_types_list = [file_types]
             else:
                 file_types_list = file_types
