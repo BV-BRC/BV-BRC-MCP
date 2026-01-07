@@ -48,6 +48,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                                sort: Optional[Any] = None,
                                cursorId: Optional[str] = None,
                                countOnly: bool = False,
+                               batchSize: Optional[int] = None,
                                token: Optional[str] = None) -> str:
         """
         Query BV-BRC data with structured filters; Solr syntax is handled for you.
@@ -70,6 +71,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             sort: Sort string or list of field/direction dicts (optional).
             cursorId: Cursor ID for pagination ("*" or omit for first page).
             countOnly: If True, only return the total count without data.
+            batchSize: Number of rows to return per page (optional, defaults to 100, valid range: 1-10000).
             token: Authentication token (optional, auto-detected if token_provider is configured).
         """
         print(f"Querying collection: {collection}, count flag = {countOnly}.")
@@ -104,6 +106,14 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             else:
                 filter_str = auto
 
+        # Validate batchSize if provided
+        if batchSize is not None:
+            if batchSize < 1 or batchSize > 10000:
+                return json.dumps({
+                    "error": f"Invalid batchSize: {batchSize}. Must be between 1 and 10000.",
+                    "source": "bvbrc-mcp-data"
+                }, indent=2, sort_keys=True)
+
         # Authentication headers
         headers: Optional[Dict[str, str]] = None
         if _token_provider:
@@ -116,7 +126,8 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         print(f"Filter is {filter_str}")
         try:
             result = query_direct(collection, filter_str, options, _base_url, 
-                                 headers=headers, cursorId=cursorId, countOnly=countOnly)
+                                 headers=headers, cursorId=cursorId, countOnly=countOnly,
+                                 batch_size=batchSize)
             # Prefer count for the returned page; fall back to numFound if needed
             observed_count = result.get("count", result.get("numFound"))
             print(f"Query returned {observed_count} results.")

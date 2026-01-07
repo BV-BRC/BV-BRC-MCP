@@ -39,7 +39,8 @@ def create_bvbrc_client(base_url: str = None, headers: Dict[str, str] = None) ->
 
 def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None,
                 base_url: str = None, headers: Dict[str, str] = None,
-                cursorId: str | None = None, countOnly: bool = False) -> Dict[str, Any]:
+                cursorId: str | None = None, countOnly: bool = False,
+                batch_size: Optional[int] = None) -> Dict[str, Any]:
     """
     Query BV-BRC data directly using core name and filter string with cursor-based streaming.
     
@@ -51,6 +52,7 @@ def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None
         headers: Optional headers override
         cursorId: Cursor ID for pagination (optional, use "*" or None for first page)
         countOnly: If True, iterate through all pages to compute total count without returning data
+        batch_size: Number of rows to return per page (optional, defaults to CURSOR_BATCH_SIZE=100)
         
     Returns:
         Dict with keys depending on countOnly:
@@ -58,11 +60,14 @@ def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None
         - Else: { "results": [ ...batch... ], "count": <batch_count>, "nextCursorId": <str|None> }
         
     Note:
-        Batch size is hardcoded to 1000 entries per page. Use nextCursorId from the response
+        Batch size defaults to 100 entries per page. Use nextCursorId from the response
         to fetch the next batch by passing it as cursorId in a subsequent call.
     """
     client = create_bvbrc_client(base_url, headers)
     options = options or {}
+    
+    # Use provided batch_size or fall back to default constant
+    rows_per_page = batch_size if batch_size is not None else CURSOR_BATCH_SIZE
     
     # Build context_overrides with timeout and any provided base_url/headers
     context_overrides = {"timeout": SOLR_QUERY_TIMEOUT}
@@ -73,7 +78,7 @@ def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None
     
     # Prepare a configured CursorPager via the client (ensures correct unique_key/sort per collection)
     pager = getattr(client, core).stream_all_solr(
-        rows=CURSOR_BATCH_SIZE,
+        rows=rows_per_page,
         sort=options.get("sort"),
         fields=options.get("select"),
         q_expr=filter_str if filter_str else "*:*",

@@ -6,8 +6,8 @@
     "authentication_url": "https://user.patricbrc.org/authenticate",
     "openid_config_url": "https://dev-7.bv-brc.org",
     "mcp_url": "140.221.78.67",
-    "port": 12007,
-    "port2": 8051,
+    "port2": 12007,
+    "port": 8051,
     "oauth": {
         "allowed_callback_urls": [
             "https://chatgpt.com/connector_platform_oauth_redirect",
