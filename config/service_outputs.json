@@ -1,57 +1,51 @@
 {
   "GenomeAssembly2": {
-    "contigs_fasta": "${params.output_path}/${params.output_file}.contigs.fasta",
-    "assembly_report": "${params.output_path}/${params.output_file}.assembly_report.txt",
-    "assembly_stats": "${params.output_path}/${params.output_file}.assembly_stats.json"
+    "contigs_fasta": "${params.output_path}/.${params.output_file}/${params.output_file}_contigs.fasta",
+    "assembly_report": "${params.output_path}/.${params.output_file}/${params.output_file}_AssemblyReport.html"
   },
   "GenomeAnnotation": {
-    "genome_object": "${params.output_path}/.${params.output_file}/genome.gto",
-    "genbank_file": "${params.output_path}/${params.output_file}.gbk",
-    "gff_file": "${params.output_path}/${params.output_file}.gff"
+    "genome_file": "${params.output_path}/.${params.output_file}/${params.output_file}.genome",
+    "genome_report": "${params.output_path}/.${params.output_file}/GenomeReport.html"
+  },
+  "ComparativeSystems": {
+    "pathways_table": "${params.output_path}/.${params.output_file}/${params.output_file}_pathways_tables.json",
+    "subsystems_table": "${params.output_path}/.${params.output_file}/${params.output_file}_subsystems_tables.json",
+    "proteinfams_table": "${params.output_path}/.${params.output_file}/${params.output_file}_proteinfams_tables.json"
   },
   "ComprehensiveGenomeAnalysis": {
-    "genome_object": "${params.output_path}/.${params.output_file}/genome.gto",
-    "contigs_fasta": "${params.output_path}/${params.output_file}.contigs.fasta",
-    "annotation_report": "${params.output_path}/${params.output_file}.annotation_report.txt",
-    "genbank_file": "${params.output_path}/${params.output_file}.gbk",
-    "gff_file": "${params.output_path}/${params.output_file}.gff"
+    "genome_report": "${params.output_path}/.${params.output_file}/FullGenomeReport.html",
+    "genome_file": "${params.output_path}/.${params.output_file}/annotated.genome"
   },
   "Homology": {
-    "blast_output": "${params.output_path}/${params.output_file}.blast_output.txt",
-    "blast_json": "${params.output_path}/${params.output_file}.blast_output.json"
+    "blast_output": "${params.output_path}/.${params.output_file}/blast_out.txt",
+    "blast_json": "${params.output_path}/.${params.output_file}/blast_out.json"
   },
   "RNASeq": {
-    "expression_data": "${params.output_path}/${params.output_file}.expression_data.json",
-    "differential_expression": "${params.output_path}/${params.output_file}.differential_expression.txt",
-    "alignment_bam": "${params.output_path}/${params.output_file}.bam"
+    "multiqc_report": "${params.output_path}/.${params.output_file}/multiqc_report.html"
   },
   "TaxonomicClassification": {
-    "classification_report": "${params.output_path}/${params.output_file}.classification_report.txt",
-    "krona_html": "${params.output_path}/${params.output_file}.krona.html"
+    "classification_report": "${params.output_path}/.${params.output_file}/Taxonomic-Classification-Service-BVBRC_multiqc_report.html"
   },
   "Variation": {
-    "vcf_file": "${params.output_path}/${params.output_file}.vcf",
-    "variants_json": "${params.output_path}/${params.output_file}.variants.json"
+    "variation_table": "${params.output_path}/.${params.output_file}/all.var.tsv"
   },
   "MetagenomeBinning": {
-    "bins_directory": "${params.output_path}/${params.output_file}_bins",
-    "binning_report": "${params.output_path}/${params.output_file}.binning_report.txt"
+    "bins_directory": "${params.output_path}/.${params.output_file}/BinningReport.html"
   },
   "MetagenomicReadMapping": {
-    "mapping_report": "${params.output_path}/${params.output_file}.mapping_report.txt",
-    "abundance_table": "${params.output_path}/${params.output_file}.abundance.tsv"
+    "mapping_report": "${params.output_path}/.${params.output_file}/MetagenomicReadMappingReport.html"
   },
   "CodonTree": {
-    "tree_file": "${params.output_path}/${params.output_file}.nwk",
-    "tree_svg": "${params.output_path}/${params.output_file}.svg"
+    "tree_file": "${params.output_path}/.${params.output_file}/${params.output_file}_tree.nwk",
+    "tree_report": "${params.output_path}/.${params.output_file}/.${params.output_file}_report.html"
   },
   "GeneTree": {
-    "tree_file": "${params.output_path}/${params.output_file}.nwk",
-    "alignment_file": "${params.output_path}/${params.output_file}.aln"
+    "tree_file": "${params.output_path}/.${params.output_file}/${params.output_file}_raxml_rell_tree.nwk",
+    "alignment_file": "${params.output_path}/.${params.output_file}/${params.output_file}_aligned.fa",
+    "tree_report": "${params.output_path}/.${params.output_file}/${params.output_file}_tree_report.html"
   },
   "WholeGenomeSNPAnalysis": {
-    "snp_matrix": "${params.output_path}/${params.output_file}.snp_matrix.tsv",
-    "tree_file": "${params.output_path}/${params.output_file}.nwk"
+    "report": "${params.output_path}/.${params.output_file}/WholeGenomeSNP_Report.html"
   },
   "ViralAssembly": {
     "contigs_fasta": "${params.output_path}/${params.output_file}.contigs.fasta",

@@ -419,7 +419,7 @@ def get_collection_fields(collection: str) -> List[str]:
     """
     current_dir = os.path.dirname(os.path.abspath(__file__))
     prompts_dir = os.path.join(current_dir, "..", "prompts")
-    prompt_file = os.path.join(prompts_dir, f"{collection}.txt")
+    prompt_file = os.path.join(prompts_dir, "solr_collections", f"{collection}.txt")
 
     fields: Set[str] = set()
     try:
@@ -487,7 +487,7 @@ def lookup_parameters(collection: str) -> str:
     prompts_dir = os.path.join(current_dir, '..', 'prompts')
     
     # Construct the file path for the collection
-    prompt_file = os.path.join(prompts_dir, f"{collection}.txt")
+    prompt_file = os.path.join(prompts_dir, "solr_collections", f"{collection}.txt")
     
     try:
         # Read the parameters from the file

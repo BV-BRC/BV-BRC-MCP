@@ -4,10 +4,15 @@ Workflow manifest generation functions
 import os
 import json
 import sys
+import time
 from typing import Dict, List, Any, Optional
 from common.llm_client import LLMClient
 from common.json_rpc import JsonRpcCaller
 from functions.service_functions import enumerate_apps, get_service_info
+
+# Service catalog built once on first use and reused for all subsequent calls
+# Since the service catalog is the same for all users, we build it once and keep it
+_service_catalog: Optional[Dict[str, Any]] = None
 
 
 def load_config_file(filename: str) -> Dict:
@@ -28,9 +33,23 @@ def load_prompt_file(filename: str) -> str:
         return f.read()
 
 
-def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -> Dict[str, Any]:
+def clear_service_catalog():
     """
-    Build a comprehensive service catalog with names, descriptions, and schemas.
+    Clear the service catalog.
+    
+    Useful for testing or forcing a refresh of the catalog.
+    """
+    global _service_catalog
+    _service_catalog = None
+    print("Service catalog cleared", file=sys.stderr)
+
+
+def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -> bool:
+    """
+    Initialize the service catalog at startup if a token is available.
+    
+    This is optional - the catalog will be built on first use if not initialized here.
+    Building it at startup ensures the first request is fast.
     
     Args:
         api: JsonRpcCaller instance
@@ -38,10 +57,49 @@ def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -
         user_id: User ID (optional)
         
     Returns:
+        True if catalog was built successfully, False otherwise
+    """
+    try:
+        print("Initializing service catalog at startup...", file=sys.stderr)
+        build_service_catalog(api, token, user_id, force_rebuild=False)
+        return True
+    except Exception as e:
+        print(f"Warning: Could not initialize service catalog at startup: {e}", file=sys.stderr)
+        print("  Catalog will be built on first use instead", file=sys.stderr)
+        return False
+
+
+def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None, force_rebuild: bool = False) -> Dict[str, Any]:
+    """
+    Build a comprehensive service catalog with names, descriptions, and schemas.
+    
+    The catalog is built once on first use and reused for all subsequent calls,
+    since the service catalog is the same for all users. This avoids expensive
+    API calls on every request.
+    
+    Args:
+        api: JsonRpcCaller instance
+        token: Authentication token (required for first build)
+        user_id: User ID (optional, not used but kept for API compatibility)
+        force_rebuild: Force rebuilding the catalog even if it exists (default: False)
+        
+    Returns:
         Dictionary with service information
     """
-    # Get list of available services
+    global _service_catalog
+    
+    # Return cached catalog if it exists and we're not forcing a rebuild
+    if not force_rebuild and _service_catalog is not None:
+        print("Using pre-built service catalog", file=sys.stderr)
+        return _service_catalog
+    
+    # Build the catalog (only happens once, or when force_rebuild=True)
+    print("Building service catalog (this happens once at startup or first use)...", file=sys.stderr)
+    start_time = time.time()
     services_json = enumerate_apps(api, token, user_id)
+    api_time = time.time() - start_time
+    print(f"API call took {api_time:.2f} seconds", file=sys.stderr)
+    
     services_data = json.loads(services_json) if isinstance(services_json, str) else services_json
     
     # Load service name mapping
@@ -89,6 +147,10 @@ def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -
             "description": description
         })
     
+    # Store the catalog for reuse
+    _service_catalog = catalog
+    print(f"Service catalog built with {len(catalog['services'])} services", file=sys.stderr)
+    
     return catalog
 
 
@@ -113,12 +175,20 @@ def generate_workflow_manifest_internal(
         JSON string containing the workflow manifest
     """
     try:
-        # Step 1: Build service catalog
-        print("Building service catalog...", file=sys.stderr)
-        catalog = build_service_catalog(api, token, user_id)
+        # Step 1: Get service catalog (built once on first use)
+        catalog_start = time.time()
+        catalog = build_service_catalog(api, token, user_id, force_rebuild=False)
+        catalog_time = time.time() - catalog_start
+        print(f"Service catalog retrieved in {catalog_time:.2f} seconds", file=sys.stderr)
         
         # Load configuration files
         output_patterns = load_config_file('service_outputs.json')
+        
+        # Add job_output_path field to every service output
+        for service_name, service_outputs in output_patterns.items():
+            if isinstance(service_outputs, dict):
+                service_outputs['job_output_path'] = "${params.output_path}/${params.output_file}"
+        
         system_prompt = load_prompt_file('workflow_generation.txt')
         
         # Prepare service list and descriptions for the prompt
@@ -150,7 +220,10 @@ Generate a complete workflow manifest following the structure and rules in the s
             {"role": "user", "content": user_prompt}
         ]
         
+        llm_start = time.time()
         response = llm_client.chat_completion(messages)
+        llm_time = time.time() - llm_start
+        print(f"LLM call completed in {llm_time:.2f} seconds", file=sys.stderr)
         print(f"LLM response (first 300 chars): {response[:300]}...", file=sys.stderr)
         
         # Parse the response

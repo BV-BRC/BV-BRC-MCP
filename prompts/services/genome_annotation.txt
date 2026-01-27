@@ -1,8 +1,8 @@
+The parameters for the genome annotation app are:
   - contigs: Input contig file (required)
   - scientific_name: Scientific name of organism (required)
   - recipie: Specifies a non-default annotation recipe (optional)
-  - taxonomy_id: NCBI Taxonomy ID (optional, but strongly preferred. Query NCBI with taxon name to find taxon id)
+  - taxonomy_id: NCBI Taxonomy ID (optional)
   - output_path: Output directory (required)
   - output_file: Output basename (required)
-  - refence_genome_id: Reference genome ID (optional)
 

@@ -50,7 +50,7 @@ def get_service_info(service_name: str) -> str:
         parent_dir = os.path.dirname(script_dir)
         
         # Construct the path to the prompt file
-        prompt_file_path = os.path.join(parent_dir, 'prompts', f'{service_name}.txt')
+        prompt_file_path = os.path.join(parent_dir, 'prompts', 'services', f'{service_name}.txt')
         
         # Check if file exists
         if not os.path.exists(prompt_file_path):

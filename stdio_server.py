@@ -9,9 +9,10 @@ running in STDIO mode for use with MCP clients like Claude Desktop.
 from fastmcp import FastMCP
 from common.json_rpc import JsonRpcCaller
 from tools.data_tools import register_data_tools
-from tools.service_tools import register_service_tools
+from tools.service_tools import register_service_tools, extract_userid_from_token
 from tools.workspace_tools import register_workspace_tools
 from common.token_provider import TokenProvider
+from functions.workflow_functions import initialize_service_catalog
 import json
 import sys
 import os
@@ -73,6 +74,15 @@ def main() -> int:
         print("  Service and workspace tools will require a token parameter", file=sys.stderr)
     else:
         print("  KB_AUTH_TOKEN is set ✓", file=sys.stderr)
+        # Try to initialize service catalog at startup for better performance
+        try:
+            default_token = token_provider.get_token(None)
+            if default_token:
+                user_id = extract_userid_from_token(default_token)
+                initialize_service_catalog(service_api, default_token, user_id)
+        except Exception as e:
+            print(f"  Note: Could not pre-initialize service catalog: {e}", file=sys.stderr)
+            print("    Catalog will be built on first use instead", file=sys.stderr)
     
     try:
         # Run in stdio mode
