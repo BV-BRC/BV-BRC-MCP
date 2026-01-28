@@ -9,19 +9,16 @@ import os
 import re
 import json
 import time
-from typing import Any, Dict, List, Tuple, Optional, Set, Generator
+import asyncio
+from typing import Any, Dict, List, Tuple, Optional, Set
 from bvbrc_solr_api import create_client, query
 from bvbrc_solr_api.core.solr_http_client import select as solr_select
 
 # Configuration constants
 CURSOR_BATCH_SIZE = 1000
-# Timeout for Solr queries in seconds (default is 60, increase for large queries)
-SOLR_QUERY_TIMEOUT = 300.0  # 5 minutes
-# Maximum results to return when streaming (absurdly high default, adjustable)
-MAX_STREAM_RESULTS = 1_000_000
-# Maximum time for entire streaming operation in seconds (30 minutes)
-STREAM_TIMEOUT = 1800.0
-# Maximum retry attempts for failed batch fetches
+# Timeout for Solr queries in seconds (5 minutes for large single-page queries)
+SOLR_QUERY_TIMEOUT = 300.0
+# Maximum retry attempts for failed queries
 MAX_RETRIES = 3
 # Base seconds for exponential backoff during retries
 RETRY_BACKOFF_BASE = 1.0
@@ -48,14 +45,16 @@ def create_bvbrc_client(base_url: str = None, headers: Dict[str, str] = None) ->
     return create_client(context_overrides)
 
 
-def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None,
+async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None,
                 base_url: str = None, headers: Dict[str, str] = None,
                 cursorId: str | None = None, countOnly: bool = False,
-                batch_size: Optional[int] = None, stream: bool = False,
-                max_results: Optional[int] = None,
-                stream_timeout: Optional[float] = None):
+                batch_size: Optional[int] = None) -> Dict[str, Any]:
     """
-    Query BV-BRC data directly using core name and filter string with cursor-based streaming.
+    Query BV-BRC data directly using core name and filter string with cursor-based pagination.
+    
+    This async function performs a single page query and returns immediately with results
+    and a cursor for fetching subsequent pages. Multiple concurrent queries from different
+    users are fully supported without blocking.
     
     Args:
         core: The core/collection name (e.g., "genome", "genome_feature")
@@ -64,33 +63,34 @@ def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None
         base_url: Optional base URL override
         headers: Optional headers override
         cursorId: Cursor ID for pagination (optional, use "*" or None for first page)
-        countOnly: If True, iterate through all pages to compute total count without returning data
+        countOnly: If True, return only the total count without fetching documents
         batch_size: Number of rows to return per page (optional, defaults to CURSOR_BATCH_SIZE=1000)
-        stream: If True, returns a generator that yields all batches progressively
-        max_results: Maximum total results to return when streaming (defaults to MAX_STREAM_RESULTS)
-        stream_timeout: Maximum time in seconds for streaming operation (defaults to STREAM_TIMEOUT)
         
     Returns:
-        - If stream is False:
-            Dict with keys depending on countOnly:
-            - If countOnly is True: { "numFound": <total_count> }
-            - Else: { "results": [...], "count": <batch_count>, "numFound": <total>, "nextCursorId": <str|None> }
-        - If stream is True:
-            Generator yielding dict per batch with keys:
-            { "results": [...], "count": <count>, "numFound": <total>, "nextCursorId": <cursor>,
-              "batchNumber": <n>, "done": <bool>, "cumulativeCount": <total_so_far> }
+        Dict with keys depending on countOnly:
+        - If countOnly is True: { "numFound": <total_count> }
+        - Otherwise: { 
+            "results": [...],           # Array of result documents
+            "count": <batch_count>,     # Number of results in this page  
+            "numFound": <total>,        # Total results matching query
+            "nextCursorId": <str|None>  # Cursor for next page (None = last page)
+          }
         
     Note:
         Batch size defaults to 1000 entries per page. Use nextCursorId from the response
         to fetch the next batch by passing it as cursorId in a subsequent call.
-        Streaming mode automatically fetches all pages until complete.
+        
+    Example:
+        # Fetch all results across multiple pages
+        cursor = "*"
+        all_results = []
+        while cursor:
+            response = await query_direct("genome", "genus:Salmonella", cursorId=cursor)
+            all_results.extend(response["results"])
+            cursor = response.get("nextCursorId")
+            if not cursor:
+                break
     """
-    client = create_bvbrc_client(base_url, headers)
-    options = options or {}
-    
-    # Use provided batch_size or fall back to default constant
-    rows_per_page = batch_size if batch_size is not None else CURSOR_BATCH_SIZE
-    
     # Build context_overrides with timeout and any provided base_url/headers
     context_overrides = {"timeout": SOLR_QUERY_TIMEOUT}
     if base_url:
@@ -98,177 +98,75 @@ def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None
     if headers:
         context_overrides["headers"] = headers
     
-    # Prepare a configured CursorPager via the client (ensures correct unique_key/sort per collection)
-    pager = getattr(client, core).stream_all_solr(
-        rows=rows_per_page,
-        sort=options.get("sort"),
-        fields=options.get("select"),
-        q_expr=filter_str if filter_str else "*:*",
-        start_cursor=cursorId or "*",
-        context_overrides=context_overrides
-    )
-
-    # Helper to execute a single Solr select call based on the pager's current state with retry logic
-    def _single_page_with_retry(cursor_mark: str) -> Tuple[List[Dict[str, Any]], str | None, Optional[int]]:
-        """Fetch a single page with exponential backoff retry on failure."""
-        last_exception = None
+    options = options or {}
+    
+    # Use provided batch_size or fall back to default constant
+    rows_per_page = batch_size if batch_size is not None else CURSOR_BATCH_SIZE
+    
+    # Execute single-page query with auto-cleanup
+    async with create_client(context_overrides) as client:
+        # Prepare a configured CursorPager via the client
+        pager = getattr(client, core).stream_all_solr(
+            rows=rows_per_page,
+            sort=options.get("sort"),
+            fields=options.get("select"),
+            q_expr=filter_str if filter_str else "*:*",
+            start_cursor=cursorId or "*",
+            context_overrides=context_overrides
+        )
         
-        for attempt in range(MAX_RETRIES):
-            try:
-                params = dict(pager.base_params)
-                params["rows"] = pager.rows
-                params["sort"] = pager.sort
-                params["cursorMark"] = cursor_mark
-                result = solr_select(
-                    pager.collection,
-                    params,
-                    base_url=pager.base_url,
-                    headers=pager.headers,
-                    auth=pager.auth,
-                    timeout=pager.timeout,
-                )
+        # Helper to execute a single Solr select call with retry logic
+        async def _single_page_with_retry(cursor_mark: str) -> Tuple[List[Dict[str, Any]], str | None, Optional[int]]:
+            """Fetch a single page with exponential backoff retry on failure."""
+            last_exception = None
+            
+            for attempt in range(MAX_RETRIES):
+                try:
+                    params = dict(pager.base_params)
+                    params["rows"] = pager.rows
+                    params["sort"] = pager.sort
+                    params["cursorMark"] = cursor_mark
+                    result = await solr_select(
+                        pager.collection,
+                        params,
+                        client=client._http_client,
+                        base_url=pager.base_url,
+                        headers=pager.headers,
+                        auth=pager.auth,
+                        timeout=pager.timeout,
+                    )
 
-                response = result.get("response", {})
-                docs: List[Dict[str, Any]] = response.get("docs", [])
-                next_cursor = result.get("nextCursorMark")
-                num_found = response.get("numFound")
-                return docs, next_cursor, num_found
-                
-            except Exception as e:
-                last_exception = e
-                if attempt < MAX_RETRIES - 1:
-                    # Exponential backoff: 1s, 2s, 4s
-                    wait_time = RETRY_BACKOFF_BASE * (2 ** attempt)
-                    time.sleep(wait_time)
-                else:
-                    # Final attempt failed, raise the exception
-                    raise last_exception
-        
-        # Should not reach here, but just in case
-        if last_exception:
-            raise last_exception
-        raise RuntimeError("Unexpected error in _single_page_with_retry")
+                    response = result.get("response", {})
+                    docs: List[Dict[str, Any]] = response.get("docs", [])
+                    next_cursor = result.get("nextCursorMark")
+                    num_found = response.get("numFound")
+                    return docs, next_cursor, num_found
+                    
+                except Exception as e:
+                    last_exception = e
+                    if attempt < MAX_RETRIES - 1:
+                        wait_time = RETRY_BACKOFF_BASE * (2 ** attempt)
+                        await asyncio.sleep(wait_time)
+                    else:
+                        raise last_exception
+            
+            if last_exception:
+                raise last_exception
+            raise RuntimeError("Unexpected error in _single_page_with_retry")
 
-    # Non-streaming modes (existing behavior)
-    if not stream:
         if countOnly:
-            # Return Solr-reported total without iterating pages
-            docs, _next_cursor, num_found = _single_page_with_retry(pager.cursor)
+            # Return Solr-reported total without fetching documents
+            docs, _next_cursor, num_found = await _single_page_with_retry(pager.cursor)
             return {"numFound": num_found if num_found is not None else len(docs)}
 
-        # Fetch a single batch/page and return nextCursorId for optional continuation
-        docs, next_cursor, num_found = _single_page_with_retry(pager.cursor)
+        # Fetch a single batch/page and return nextCursorId for pagination
+        docs, next_cursor, num_found = await _single_page_with_retry(pager.cursor)
         return {
             "results": docs,
             "count": len(docs),
             "numFound": num_found if num_found is not None else len(docs),
             "nextCursorId": next_cursor,
         }
-    
-    # Streaming mode: return a generator
-    return _stream_all_batches(
-        pager,
-        _single_page_with_retry,
-        max_results or MAX_STREAM_RESULTS,
-        stream_timeout or STREAM_TIMEOUT
-    )
-
-
-def _stream_all_batches(
-    pager: Any,
-    fetch_fn: Any,
-    max_results: int,
-    timeout: float
-) -> Generator[Dict[str, Any], None, None]:
-    """
-    Generator that yields all batches from Solr until complete.
-    
-    Args:
-        pager: The CursorPager instance
-        fetch_fn: Function to fetch a single page (with retry logic)
-        max_results: Maximum total results to yield
-        timeout: Maximum time in seconds for the entire streaming operation
-        
-    Yields:
-        Dict per batch with results, metadata, and progress information
-    """
-    start_time = time.time()
-    cursor = pager.cursor
-    batch_number = 0
-    cumulative_count = 0
-    num_found = None
-    skipped_records = 0
-    
-    while True:
-        # Check timeout
-        elapsed = time.time() - start_time
-        if elapsed > timeout:
-            yield {
-                "error": "Stream timeout exceeded",
-                "batchNumber": batch_number,
-                "cumulativeCount": cumulative_count,
-                "timeoutSeconds": timeout,
-                "elapsedSeconds": elapsed,
-                "done": True,
-                "truncated": True
-            }
-            return
-        
-        # Check max results limit
-        if cumulative_count >= max_results:
-            yield {
-                "batchNumber": batch_number,
-                "results": [],
-                "count": 0,
-                "numFound": num_found,
-                "cumulativeCount": cumulative_count,
-                "done": True,
-                "truncated": True,
-                "message": f"Maximum results limit ({max_results}) reached"
-            }
-            return
-        
-        # Fetch next batch
-        try:
-            docs, next_cursor, num_found = fetch_fn(cursor)
-        except Exception as e:
-            # Error fetching batch - yield error and stop
-            yield {
-                "error": f"Error fetching batch: {str(e)}",
-                "batchNumber": batch_number,
-                "cumulativeCount": cumulative_count,
-                "done": True,
-                "partial": True
-            }
-            return
-        
-        batch_number += 1
-        batch_count = len(docs)
-        cumulative_count += batch_count
-        
-        # Check if we're done (no more results or cursor didn't advance)
-        is_done = (batch_count == 0 or 
-                   next_cursor is None or 
-                   next_cursor == cursor or
-                   cumulative_count >= max_results)
-        
-        # Yield this batch
-        yield {
-            "results": docs,
-            "count": batch_count,
-            "numFound": num_found if num_found is not None else cumulative_count,
-            "nextCursorId": next_cursor,
-            "batchNumber": batch_number,
-            "cumulativeCount": cumulative_count,
-            "done": is_done,
-            "elapsedSeconds": time.time() - start_time
-        }
-        
-        if is_done:
-            return
-        
-        # Move to next cursor
-        cursor = next_cursor
 
 
 # Helper utilities shared by MCP tools

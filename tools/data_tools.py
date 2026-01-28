@@ -41,21 +41,23 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
     _token_provider = token_provider
 
     # New, clearer tool names
-    @mcp.tool(annotations={"readOnlyHint": True, "streamingHint": True})
-    def bvbrc_query_collection(collection: str,
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def bvbrc_query_collection(collection: str,
                                filters: Optional[Dict[str, Any]] = None,
                                select: Optional[Any] = None,
                                sort: Optional[Any] = None,
                                cursorId: Optional[str] = None,
                                countOnly: bool = False,
                                batchSize: Optional[int] = None,
-                               stream: bool = False,
-                                token: Optional[str] = None) -> Any:
+                               token: Optional[str] = None) -> Dict[str, Any]:
         """
         Query BV-BRC data with structured filters; Solr syntax is handled for you.
         
+        Returns a single page of results with cursor for pagination. For large result sets,
+        make multiple calls using the returned nextCursorId until it becomes null.
+        
         Args:
-            collection: Collection name.
+            collection: Collection name (e.g., "genome", "genome_feature").
             filters: Structured filter object describing conditions and grouping. Example:
                 {
                   "logic": "and",
@@ -70,15 +72,37 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 }
             select: List of fields or comma-separated string (optional).
             sort: Sort string or list of field/direction dicts (optional).
-            cursorId: Cursor ID for pagination ("*" or omit for first page, ignored if stream=True).
+            cursorId: Cursor ID for pagination. Use "*" or omit for first page.
+                     Pass the returned nextCursorId to fetch subsequent pages.
+                     When nextCursorId is null, you've reached the end.
             countOnly: If True, only return the total count without data.
-            batchSize: Number of rows to return per page (optional, defaults to 1000, valid range: 1-10000).
-            stream: If True, stream all results progressively batch-by-batch (ignores cursorId).
-                   Uses internal limits: max 1,000,000 results, 30 minute timeout.
+            batchSize: Number of rows per page (defaults to 1000, range: 1-10000).
+                      Use smaller values for faster initial response, larger for fewer round trips.
             token: Authentication token (optional, auto-detected if token_provider is configured).
+            
+        Returns:
+            Dict with structure:
+            - If countOnly=True: {"numFound": <int>, "source": "bvbrc-mcp-data"}
+            - Otherwise: {
+                "results": [...],           # Array of result objects
+                "count": <int>,             # Number of results in this page
+                "numFound": <int>,          # Total results matching query
+                "nextCursorId": <str|null>, # Pass this to get next page (null = no more pages)
+                "source": "bvbrc-mcp-data"
+              }
+              
+        Example pagination pattern:
+            cursor = "*"
+            all_results = []
+            while cursor:
+                response = bvbrc_query_collection(collection="genome", cursorId=cursor, batchSize=5000)
+                all_results.extend(response["results"])
+                cursor = response.get("nextCursorId")
+                if not cursor:  # or compare cursor == previous cursor
+                    break
         """
-        mode_str = "streaming" if stream else ("count-only" if countOnly else "single-batch")
-        print(f"Querying collection: {collection}, mode: {mode_str}")
+        mode_str = "count-only" if countOnly else "paginated-query"
+        print(f"Querying collection: {collection}, mode: {mode_str}, cursorId: {cursorId or '*'}")
         
         options: Dict[str, Any] = {}
         select_fields = normalize_select(select)
@@ -93,12 +117,12 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         invalid_fields = validate_filter_fields(filters, allowed_fields) if filters else []
         if invalid_fields:
             sample_fields = sorted(list(allowed_fields))[:25] if allowed_fields else []
-            return json.dumps({
+            return {
                 "error": f"Invalid field(s) for collection '{collection}': {', '.join(invalid_fields)}",
                 "hint": "Call bvbrc_collection_fields_and_parameters to see valid fields.",
                 "allowedFieldsSample": sample_fields,
                 "source": "bvbrc-mcp-data"
-            }, indent=2, sort_keys=True)
+            }
 
         # Build Solr query from structured filters
         filter_str = build_filter(filters)
@@ -114,10 +138,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         # Validate batchSize if provided
         if batchSize is not None:
             if batchSize < 1 or batchSize > 10000:
-                return json.dumps({
+                return {
                     "error": f"Invalid batchSize: {batchSize}. Must be between 1 and 10000.",
                     "source": "bvbrc-mcp-data"
-                }, indent=2, sort_keys=True)
+                }
 
         # Authentication headers
         headers: Optional[Dict[str, str]] = None
@@ -131,46 +155,31 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         print(f"Filter is {filter_str}")
         
         try:
-            result = query_direct(
+            result = await query_direct(
                 collection, filter_str, options, _base_url, 
                 headers=headers, cursorId=cursorId, countOnly=countOnly,
-                batch_size=batchSize, stream=stream,
-                max_results=None, stream_timeout=None
+                batch_size=batchSize
             )
             
-            # Non-streaming mode: return result directly
-            if not stream:
-                # Prefer count for the returned page; fall back to numFound if needed
-                observed_count = result.get("count", result.get("numFound"))
-                print(f"Query returned {observed_count} results.")
-                
-                # Add 'source' field to the top-level response
-                result['source'] = 'bvbrc-mcp-data'
-                
-                return json.dumps(result, indent=2, sort_keys=True)
+            # Prefer count for the returned page; fall back to numFound if needed
+            observed_count = result.get("count", result.get("numFound"))
+            if countOnly:
+                print(f"Query found {observed_count} total results.")
+            else:
+                print(f"Query returned {observed_count} results for this page.")
+                if result.get("nextCursorId"):
+                    print(f"  More results available. Use nextCursorId to fetch next page.")
             
-            # Streaming mode: yield batches from generator
-            print(f"Starting streaming for collection: {collection}")
+            # Add 'source' field to the top-level response
+            result['source'] = 'bvbrc-mcp-data'
             
-            # Yield each batch as it arrives from the generator
-            for batch in result:
-                # Add source to batch
-                batch['source'] = 'bvbrc-mcp-data'
-                
-                # Print batch metadata to stdout for debugging (without results field)
-                batch_metadata = {k: v for k, v in batch.items() if k != 'results'}
-                batch_metadata_json = json.dumps(batch_metadata, indent=2, sort_keys=True)
-                print(batch_metadata_json, flush=True)
-                
-                # Yield full batch (with results) to client
-                batch_json = json.dumps(batch, indent=2, sort_keys=True)
-                yield batch_json
+            return result
             
         except Exception as e:
-            return json.dumps({
+            return {
                 "error": f"Error querying {collection}: {str(e)}",
                 "source": "bvbrc-mcp-data"
-            }, indent=2)
+            }
 
     @mcp.tool(annotations={"readOnlyHint": True})
     def bvbrc_collection_fields_and_parameters(collection: str) -> str:
