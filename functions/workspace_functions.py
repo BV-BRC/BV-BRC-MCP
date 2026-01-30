@@ -1,12 +1,14 @@
 from common.json_rpc import JsonRpcCaller
 from typing import List, Any
+import asyncio
+import httpx
 import requests
 import os
 import json
 import sys
 import base64
 
-def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: str | List[str] = None) -> List[str]:
+async def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: str | List[str] = None) -> List[str]:
     """
     List the contents of a specific workspace directory using the JSON-RPC API.
     This is NOT a generic search function, use `workspace_search` for search functionality.
@@ -52,13 +54,17 @@ def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: s
                 "includeSubDirs": False,
                 "paths": paths
             }
-        print(f"workspace_ls file_types: {file_types}, file_types_list: {file_types_list}, Query params: {json.dumps(api_params, indent=2)}", file=sys.stderr)
-        result = api.call("Workspace.ls", api_params, 1, token)
+        # Only include file_types_list in print if it was defined
+        print_msg = f"workspace_ls file_types: {file_types}, Query params: {json.dumps(api_params, indent=2)}"
+        if file_types:
+            print_msg = f"workspace_ls file_types: {file_types}, file_types_list: {file_types_list}, Query params: {json.dumps(api_params, indent=2)}"
+        print(print_msg, file=sys.stderr)
+        result = await api.acall("Workspace.ls", api_params, 1, token)
         return result
     except Exception as e:
         return [f"Error listing workspace: {str(e)}"]
 
-def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: str = None, file_extension: str = None, file_types: str | List[str] = None, token: str = None) -> str:
+async def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: str = None, file_extension: str = None, file_types: str | List[str] = None, token: str = None) -> str:
     """
     Search the entire workspace for a given term and/or file extension and/or file type.
 
@@ -140,7 +146,7 @@ def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: s
         query_conditions = {"$and": conditions}
 
     try:
-        result = api.call("Workspace.ls", {
+        result = await api.acall("Workspace.ls", {
             "recursive": True,
             "excludeDirectories": False,
             "excludeObjects": False,
@@ -152,7 +158,7 @@ def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: s
     except Exception as e:
         return [f"Error searching workspace: {str(e)}"]
 
-def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> str:
+async def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> str:
     """
     Get the metadata of a file from the workspace using the JSON-RPC API.
     
@@ -164,7 +170,7 @@ def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> st
         String representation of the file metadata
     """
     try:
-        result = api.call("Workspace.get", {
+        result = await api.acall("Workspace.get", {
             "objects": [path],
             "metadata_only": True
         },1, token)
@@ -173,7 +179,7 @@ def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> st
         return [f"Error getting file metadata: {str(e)}"]
 
 
-def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_file: str = None, return_data: bool = False) -> str:
+async def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_file: str = None, return_data: bool = False) -> str:
     """
     Download a file from the workspace using the JSON-RPC API.
     
@@ -191,47 +197,49 @@ def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_fi
         If both output_file and return_data are True: Returns file data along with success message.
     """
     try:
-        download_url_obj = _get_download_url(api, path, token)
+        download_url_obj = await _get_download_url(api, path, token)
         download_url = download_url_obj[0][0]
         
         headers = {
             "Authorization": token
         }
         
-        response = requests.get(download_url, headers=headers)
-        response.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(download_url, headers=headers)
+            response.raise_for_status()
+            content = response.content
 
-        result_parts = []
-        
-        # Write to file if output_file is provided
-        if output_file:
-            with open(output_file, 'wb') as file:
-                file.write(response.content)
-            result_parts.append(f"File downloaded and saved to {output_file}")
-        
-        # Return data if return_data is True, or if output_file is None (backward compatibility)
-        if return_data or output_file is None:
-            # Try to decode as text first
-            try:
-                text_content = response.content.decode('utf-8')
-                result_parts.append(text_content)
-            except UnicodeDecodeError:
-                # If it's binary, encode as base64
-                base64_content = base64.b64encode(response.content).decode('utf-8')
-                result_parts.append(f"<base64_encoded_data>{base64_content}</base64_encoded_data>")
-        
-        # Return appropriate result
-        if len(result_parts) == 1:
-            return result_parts[0]
-        elif len(result_parts) == 2:
-            # Both file write and data return
-            return f"{result_parts[0]}\n\nFile data:\n{result_parts[1]}"
-        else:
-            return response.content  # Fallback to original behavior
+            result_parts = []
+            
+            # Write to file if output_file is provided
+            if output_file:
+                with open(output_file, 'wb') as file:
+                    file.write(content)
+                result_parts.append(f"File downloaded and saved to {output_file}")
+            
+            # Return data if return_data is True, or if output_file is None (backward compatibility)
+            if return_data or output_file is None:
+                # Try to decode as text first
+                try:
+                    text_content = content.decode('utf-8')
+                    result_parts.append(text_content)
+                except UnicodeDecodeError:
+                    # If it's binary, encode as base64
+                    base64_content = base64.b64encode(content).decode('utf-8')
+                    result_parts.append(f"<base64_encoded_data>{base64_content}</base64_encoded_data>")
+            
+            # Return appropriate result
+            if len(result_parts) == 1:
+                return result_parts[0]
+            elif len(result_parts) == 2:
+                # Both file write and data return
+                return f"{result_parts[0]}\n\nFile data:\n{result_parts[1]}"
+            else:
+                return content  # Fallback to original behavior
     except Exception as e:
         return [f"Error downloading file: {str(e)}"]
 
-def _get_download_url(api: JsonRpcCaller, path: str, token: str) -> str:
+async def _get_download_url(api: JsonRpcCaller, path: str, token: str) -> str:
     """
     Get the download URL of a file from the workspace using the JSON-RPC API.
     
@@ -243,7 +251,7 @@ def _get_download_url(api: JsonRpcCaller, path: str, token: str) -> str:
         String representation of the download URL
     """
     try:
-        result = api.call("Workspace.get_download_url", {
+        result = await api.acall("Workspace.get_download_url", {
             "objects": [path],
         },1, token)
         return result
@@ -264,7 +272,7 @@ def _get_user_id_from_token(token: str) -> str:
         print(f"Error extracting user ID from token: {e}")
         return None
 
-def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = None, token: str = None) -> str:
+async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = None, token: str = None) -> str:
     """
     Create an upload URL for a file in the workspace using the JSON-RPC API.
     
@@ -288,7 +296,7 @@ def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = None, 
             upload_dir = '/' + user_id + '/home'
         download_url_path = os.path.join(upload_dir,os.path.basename(filename))
         # call format: workspace file location, file type, object metadata, object content
-        result = _workspace_create(
+        result = await _workspace_create(
             api,
             [[download_url_path, 'unspecified', {}, '']],
             token,
@@ -344,12 +352,12 @@ def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = None, 
     except Exception as e:
         return {"error": f"Error creating upload URL: {str(e)}"}
 
-def _workspace_create(api: JsonRpcCaller, objects: list, token: str, create_upload_nodes: bool = True, overwrite: Any = None):
+async def _workspace_create(api: JsonRpcCaller, objects: list, token: str, create_upload_nodes: bool = True, overwrite: Any = None):
     """
     Helper to invoke Workspace.create via JSON-RPC.
     """
     try:
-        return api.call(
+        return await api.acall(
             "Workspace.create",
             {
                 "objects": objects,
@@ -412,7 +420,7 @@ def _upload_file_to_url(filename: str, upload_url: str, token: str) -> dict:
     except Exception as e:
         return {"success": False, "error": f"Upload failed: {str(e)}"}
 
-def workspace_create_genome_group(api: JsonRpcCaller, genome_group_path: str, genome_id_list: List[str], token: str) -> str:
+async def workspace_create_genome_group(api: JsonRpcCaller, genome_group_path: str, genome_id_list: List[str], token: str) -> str:
     """
     Create a genome group in the workspace using the JSON-RPC API.
     """
@@ -425,14 +433,14 @@ def workspace_create_genome_group(api: JsonRpcCaller, genome_group_path: str, ge
             'name': genome_group_name
         }
         print("content", json.dumps(content, indent=2), file=sys.stderr)
-        result = api.call("Workspace.create", [{
+        result = await api.acall("Workspace.create", [{
             "objects": [[genome_group_path, 'genome_group', {}, content]]
         }],1, token)
         return result
     except Exception as e:
         return [f"Error creating genome group: {str(e)}"]
 
-def workspace_create_feature_group(api: JsonRpcCaller, feature_group_path: str, feature_id_list: List[str], token: str) -> str:
+async def workspace_create_feature_group(api: JsonRpcCaller, feature_group_path: str, feature_id_list: List[str], token: str) -> str:
     """
     Create a feature group in the workspace using the JSON-RPC API.
     """
@@ -444,14 +452,14 @@ def workspace_create_feature_group(api: JsonRpcCaller, feature_group_path: str, 
             },
             'name': feature_group_name
         }
-        result = api.call("Workspace.create", {
+        result = await api.acall("Workspace.create", {
             "objects": [[feature_group_path, 'feature_group', {}, content]]
         },1, token)
         return result[0][0]
     except Exception as e:
         return [f"Error creating feature group: {str(e)}"]
 
-def workspace_get_object(api: JsonRpcCaller, path: str, metadata_only: bool = False, token: str = None) -> dict:
+async def workspace_get_object(api: JsonRpcCaller, path: str, metadata_only: bool = False, token: str = None) -> dict:
     """
     Get an object from the workspace using the JSON-RPC API.
 
@@ -471,7 +479,7 @@ def workspace_get_object(api: JsonRpcCaller, path: str, metadata_only: bool = Fa
         path = requests.utils.unquote(path)
 
         # Call Workspace.get API
-        result = api.call("Workspace.get", {
+        result = await api.acall("Workspace.get", {
             "objects": [path],
             "metadata_only": metadata_only
         }, 1, token)
@@ -512,13 +520,13 @@ def workspace_get_object(api: JsonRpcCaller, path: str, metadata_only: bool = Fa
     except Exception as e:
         return {"error": f"Error getting workspace object: {str(e)}"}
 
-def workspace_get_genome_group_ids(api: JsonRpcCaller, genome_group_path: str, token: str) -> List[str]:
+async def workspace_get_genome_group_ids(api: JsonRpcCaller, genome_group_path: str, token: str) -> List[str]:
     """
     Get the IDs of the genomes in a genome group using the JSON-RPC API.
     """
     try:
         # Get the genome group object using workspace_get_object
-        result = workspace_get_object(api, genome_group_path, metadata_only=False, token=token)
+        result = await workspace_get_object(api, genome_group_path, metadata_only=False, token=token)
         # Check if there was an error
         if "error" in result:
             return [f"Error getting genome group: {result['error']}"]
@@ -536,13 +544,13 @@ def workspace_get_genome_group_ids(api: JsonRpcCaller, genome_group_path: str, t
     except Exception as e:
         return [f"Error getting genome group IDs: {str(e)}"]
 
-def workspace_get_feature_group_ids(api: JsonRpcCaller, feature_group_path: str, token: str) -> List[str]:
+async def workspace_get_feature_group_ids(api: JsonRpcCaller, feature_group_path: str, token: str) -> List[str]:
     """
     Get the IDs of the features in a feature group using the JSON-RPC API.
     """
     try:
         # Get the feature group object using workspace_get_object
-        result = workspace_get_object(api, feature_group_path, metadata_only=False, token=token)
+        result = await workspace_get_object(api, feature_group_path, metadata_only=False, token=token)
 
         # Check if there was an error
         if "error" in result:

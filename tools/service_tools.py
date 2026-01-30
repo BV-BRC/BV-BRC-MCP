@@ -150,7 +150,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
     # Helper Tools
     
     @mcp.tool(name="list_service_apps", annotations={"readOnlyHint": True})
-    def service_enumerate_apps(token: Optional[str] = None) -> str:
+    async def service_enumerate_apps(token: Optional[str] = None) -> str:
         """
         Enumerate all available BV-BRC service apps.
             
@@ -162,7 +162,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             return "Error: No authentication token available"
 
         user_id = extract_userid_from_token(auth_token)
-        result = enumerate_apps(api, auth_token, user_id=user_id)
+        result = await enumerate_apps(api, auth_token, user_id=user_id)
         
         # Parse the result and extract only the service IDs
         try:
@@ -226,7 +226,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             return f"Error getting service submission schema: {str(e)}\n\nAvailable services: {', '.join(available)}"
 
     @mcp.tool(name="get_job_details")
-    def service_get_job_details(task_ids: List[str] = None, token: Optional[str] = None) -> str:
+    async def service_get_job_details(task_ids: List[str] = None, token: Optional[str] = None) -> str:
         """
         Query the status and details of submitted jobs/tasks.
         
@@ -246,12 +246,12 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         
         user_id = extract_userid_from_token(auth_token)
         params = {"task_ids": task_ids}
-        return query_tasks(api, token=auth_token, user_id=user_id, params=params)
+        return await query_tasks(api, token=auth_token, user_id=user_id, params=params)
 
     # Main Service Submission Tool
     
     @mcp.tool(name="submit_service")
-    def submit_service(service_name: str = None, parameters: Dict[str, Any] = None, token: Optional[str] = None) -> str:
+    async def submit_service(service_name: str = None, parameters: Dict[str, Any] = None, token: Optional[str] = None) -> str:
         """
         Submit a service job to BV-BRC. This is the unified tool for submitting any BV-BRC service.
         
@@ -316,7 +316,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         if service_name in SPECIAL_API_SERVICES:
             special_api, service_func = SPECIAL_API_SERVICES[service_name]
             try:
-                return service_func(special_api, token=auth_token, user_id=user_id, **parameters)
+                return await service_func(special_api, token=auth_token, user_id=user_id, **parameters)
             except TypeError as e:
                 return f"Error: Invalid parameters for service '{service_name}'. Use get_service_submission_schema(service_name='{service_name}') to see correct parameters.\n\nDetails: {str(e)}"
             except Exception as e:
@@ -332,7 +332,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         
         # Submit the service with the provided parameters
         try:
-            result = service_func(api, token=auth_token, user_id=user_id, **parameters)
+            result = await service_func(api, token=auth_token, user_id=user_id, **parameters)
             return result
         except TypeError as e:
             return f"Error: Invalid parameters for service '{service_name}'. Use get_service_submission_schema(service_name='{service_name}') to see correct parameters.\n\nDetails: {str(e)}"
@@ -343,7 +343,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             return f"Error submitting service '{service_name}': {str(e)}\n\nUse get_service_submission_schema(service_name='{service_name}') to verify parameters."
 
     @mcp.tool(name="generate_workflow_manifest")
-    def generate_workflow_manifest(user_query: str = None, token: Optional[str] = None) -> str:
+    async def generate_workflow_manifest(user_query: str = None, token: Optional[str] = None) -> str:
         """
         Generate a workflow manifest from a natural language query.
         
@@ -398,7 +398,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             llm_client = create_llm_client_from_config(config)
             
             # Generate workflow manifest
-            result = generate_workflow_manifest_internal(
+            result = await generate_workflow_manifest_internal(
                 user_query=user_query,
                 api=api,
                 token=auth_token,

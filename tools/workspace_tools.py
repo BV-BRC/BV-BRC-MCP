@@ -62,6 +62,9 @@ def resolve_relative_paths(paths: List[str], user_id: str) -> List[str]:
         # If path already starts with /, treat as absolute
         if path.startswith('/'):
             resolved_paths.append(path)
+        elif path == 'home':
+            # If path is just "home", return home_path directly to avoid /home/home
+            resolved_paths.append(home_path)
         else:
             # Treat as relative to home directory
             resolved_paths.append(f"{home_path}/{path}")
@@ -87,6 +90,9 @@ def resolve_relative_path(path: str, user_id: str) -> str:
     # If path already starts with /, treat as absolute
     if path.startswith('/'):
         return path
+    elif path == 'home':
+        # If path is just "home", return home_path directly to avoid /home/home
+        return home_path
     else:
         # Treat as relative to home directory
         return f"{home_path}/{path}"
@@ -95,7 +101,7 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
     """Register workspace tools with the FastMCP server"""
     
     @mcp.tool()
-    def workspace_ls_tool(token: Optional[str] = None, paths: List[str] = None, file_types: Optional[str | List[str]] = None) -> str:
+    async def workspace_ls_tool(token: Optional[str] = None, paths: List[str] = None, file_types: Optional[str | List[str]] = None) -> str:
         """List the contents of the workspace.
 
         Args:
@@ -120,12 +126,12 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         print(f"WORKSPACE_LS_TOOL paths: {paths}", file=sys.stderr)
 
         print(f"Listing paths: {paths}, user_id: {user_id}, file_type: {file_types}", file=sys.stderr)
-        result = workspace_ls(api, paths, auth_token, file_types )
+        result = await workspace_ls(api, paths, auth_token, file_types )
         print(f"Listing result: {result}", file=sys.stderr)
         return str(result)
 
     @mcp.tool()
-    def workspace_search_tool(token: Optional[str] = None, search_term: Optional[str] = None, paths: List[str] = None, file_extension: Optional[str] = None, file_types: Optional[str | List[str]] = None) -> str:
+    async def workspace_search_tool(token: Optional[str] = None, search_term: Optional[str] = None, paths: List[str] = None, file_extension: Optional[str] = None, file_types: Optional[str | List[str]] = None) -> str:
         """Search the workspace for a given term and/or file extension.
 
         Args:
@@ -160,12 +166,12 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         paths = resolve_relative_paths(paths or [], user_id)
 
         print(f"Searching in paths: {paths}, user_id: {user_id}, term: {search_term}, extension: {file_extension}, file_types: {file_types}", file=sys.stderr)
-        result = workspace_search(api, paths, search_term, file_extension, file_types, auth_token)
+        result = await workspace_search(api, paths, search_term, file_extension, file_types, auth_token)
         print(f"Search result: {result}", file=sys.stderr)
         return str(result)
 
     @mcp.tool()
-    def workspace_get_file_metadata_tool(token: Optional[str] = None, path: str = None) -> str:
+    async def workspace_get_file_metadata_tool(token: Optional[str] = None, path: str = None) -> str:
         """Get the metadata of a file from the workspace.
 
         Args:
@@ -183,11 +189,11 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Getting metadata for path: {resolved_path}, user_id: {user_id}")
 
-        result = workspace_get_file_metadata(api, resolved_path, auth_token)
+        result = await workspace_get_file_metadata(api, resolved_path, auth_token)
         return str(result)
 
     @mcp.tool()
-    def workspace_download_file_tool(token: Optional[str] = None, path: str = None, output_file: Optional[str] = None, return_data: bool = False) -> str:
+    async def workspace_download_file_tool(token: Optional[str] = None, path: str = None, output_file: Optional[str] = None, return_data: bool = False) -> str:
         """Download a file from the workspace.
 
         Args:
@@ -210,11 +216,11 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Downloading file from path: {resolved_path}, user_id: {user_id}, output_file: {output_file}, return_data: {return_data}")
 
-        result = workspace_download_file(api, resolved_path, auth_token, output_file, return_data)
+        result = await workspace_download_file(api, resolved_path, auth_token, output_file, return_data)
         return str(result)
 
     @mcp.tool()
-    def workspace_upload(token: Optional[str] = None, filename: str = None, upload_dir: str = None) -> str:
+    async def workspace_upload(token: Optional[str] = None, filename: str = None, upload_dir: str = None) -> str:
         """Create an upload URL for a file in the workspace.
 
         Args:
@@ -241,11 +247,11 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Uploading file: {filename}, user_id: {user_id}, upload_dir: {upload_dir}")
 
-        result = workspace_upload(api, filename, upload_dir, auth_token)
+        result = await workspace_upload(api, filename, upload_dir, auth_token)
         return str(result)
 
     @mcp.tool()
-    def create_genome_group(token: Optional[str] = None, genome_group_name: str = None, genome_id_list: str = None, genome_group_path: str = None) -> str:
+    async def create_genome_group(token: Optional[str] = None, genome_group_name: str = None, genome_id_list: str = None, genome_group_path: str = None) -> str:
         """Create a genome group in the workspace.
 
         Args:
@@ -289,11 +295,11 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         
         print("genome_id_list_parsed", genome_id_list_parsed, file=sys.stderr)
         print("genome_id_list_parsed length", len(genome_id_list_parsed), file=sys.stderr)
-        result = workspace_create_genome_group(api, genome_group_path, genome_id_list_parsed, auth_token)
+        result = await workspace_create_genome_group(api, genome_group_path, genome_id_list_parsed, auth_token)
         return str(result)
 
     @mcp.tool()
-    def create_feature_group(token: Optional[str] = None, feature_group_name: str = None, feature_id_list: str = None, feature_group_path: str = None) -> str:
+    async def create_feature_group(token: Optional[str] = None, feature_group_name: str = None, feature_id_list: str = None, feature_group_path: str = None) -> str:
         """Create a feature group in the workspace.
 
         Args:
@@ -341,11 +347,11 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Creating feature group: {feature_group_name}, user_id: {user_id}, path: {feature_group_path}")
 
-        result = workspace_create_feature_group(api, feature_group_path, feature_id_list, auth_token)
+        result = await workspace_create_feature_group(api, feature_group_path, feature_id_list, auth_token)
         return json.dumps(result)
 
     @mcp.tool()
-    def get_genome_group_ids(token: Optional[str] = None, genome_group_name: str = None, genome_group_path: str = None) -> List[str]:
+    async def get_genome_group_ids(token: Optional[str] = None, genome_group_name: str = None, genome_group_path: str = None) -> List[str]:
         """Get the IDs of the genomes in a genome group.
 
         Args:
@@ -380,11 +386,11 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Getting genome group IDs: {genome_group_name}, user_id: {user_id}, path: {genome_group_path}")
 
-        result = workspace_get_genome_group_ids(api, genome_group_path, auth_token)
+        result = await workspace_get_genome_group_ids(api, genome_group_path, auth_token)
         return result
 
     @mcp.tool()
-    def get_feature_group_ids(token: Optional[str] = None, feature_group_name: str = None, feature_group_path: str = None) -> List[str]:
+    async def get_feature_group_ids(token: Optional[str] = None, feature_group_name: str = None, feature_group_path: str = None) -> List[str]:
         """Get the IDs of the features in a feature group.
 
         Args:
@@ -414,5 +420,5 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Getting feature group IDs: {feature_group_name}, user_id: {user_id}, path: {feature_group_path}")
 
-        result = workspace_get_feature_group_ids(api, feature_group_path, auth_token)
+        result = await workspace_get_feature_group_ids(api, feature_group_path, auth_token)
         return result

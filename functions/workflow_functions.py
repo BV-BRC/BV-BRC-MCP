@@ -44,7 +44,7 @@ def clear_service_catalog():
     print("Service catalog cleared", file=sys.stderr)
 
 
-def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -> bool:
+async def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -> bool:
     """
     Initialize the service catalog at startup if a token is available.
     
@@ -61,7 +61,7 @@ def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: str = No
     """
     try:
         print("Initializing service catalog at startup...", file=sys.stderr)
-        build_service_catalog(api, token, user_id, force_rebuild=False)
+        await build_service_catalog(api, token, user_id, force_rebuild=False)
         return True
     except Exception as e:
         print(f"Warning: Could not initialize service catalog at startup: {e}", file=sys.stderr)
@@ -69,7 +69,7 @@ def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: str = No
         return False
 
 
-def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None, force_rebuild: bool = False) -> Dict[str, Any]:
+async def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None, force_rebuild: bool = False) -> Dict[str, Any]:
     """
     Build a comprehensive service catalog with names, descriptions, and schemas.
     
@@ -96,7 +96,7 @@ def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None, f
     # Build the catalog (only happens once, or when force_rebuild=True)
     print("Building service catalog (this happens once at startup or first use)...", file=sys.stderr)
     start_time = time.time()
-    services_json = enumerate_apps(api, token, user_id)
+    services_json = await enumerate_apps(api, token, user_id)
     api_time = time.time() - start_time
     print(f"API call took {api_time:.2f} seconds", file=sys.stderr)
     
@@ -154,7 +154,7 @@ def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None, f
     return catalog
 
 
-def generate_workflow_manifest_internal(
+async def generate_workflow_manifest_internal(
     user_query: str,
     api: JsonRpcCaller,
     token: str,
@@ -177,7 +177,7 @@ def generate_workflow_manifest_internal(
     try:
         # Step 1: Get service catalog (built once on first use)
         catalog_start = time.time()
-        catalog = build_service_catalog(api, token, user_id, force_rebuild=False)
+        catalog = await build_service_catalog(api, token, user_id, force_rebuild=False)
         catalog_time = time.time() - catalog_start
         print(f"Service catalog retrieved in {catalog_time:.2f} seconds", file=sys.stderr)
         
