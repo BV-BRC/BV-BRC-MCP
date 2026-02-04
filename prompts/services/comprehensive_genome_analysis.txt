@@ -7,7 +7,7 @@ The parameters for the comprehensive genome analysis app are:
   - srr_ids: SRA Run IDs (optional)
   - recipe: Assembly algorithm (auto, unicycler, flye, meta-flye, canu, spades, meta-spades, plasmid-spades, single-cell, megahit)
   - scientific_name: Scientific name of organism (required)
-  - taxonomy_id: NCBI Taxonomy ID (optional)
+  - taxonomy_id: NCBI Taxonomy ID (required)
   - domain: Organism domain - Bacteria/Archaea/Viruses/auto (required)
 
 At least one input source (paired_end_libs, single_end_libs, or srr_ids) must be provided.

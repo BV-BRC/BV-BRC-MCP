@@ -23,7 +23,7 @@ from functions.service_functions import (
     start_metacats_app, start_proteome_comparison_app, start_comparative_systems_app,
     start_docking_app, start_similar_genome_finder_app, get_service_info
 )
-from functions.workflow_functions import generate_workflow_manifest_internal
+from functions.workflow_functions import generate_workflow_manifest_internal, create_and_execute_workflow_internal
 from typing import Any, List, Dict, Optional
 
 
@@ -354,14 +354,19 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             print(f"Exception in submit_service for '{service_name}': {error_trace}", file=sys.stderr)
             return f"Error submitting service '{service_name}': {str(e)}\n\nUse get_service_submission_schema(service_name='{service_name}') to verify parameters."
 
-    @mcp.tool(name="generate_workflow_manifest")
-    async def generate_workflow_manifest(user_query: str = None, token: Optional[str] = None) -> str:
+    @mcp.tool(name="create_and_execute_workflow")
+    async def create_and_execute_workflow(
+        user_query: str = None, 
+        auto_execute: bool = True,
+        token: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Generate a workflow manifest from a natural language query.
+        Create a workflow from natural language description and optionally execute it.
         
-        Uses an internal LLM to analyze the user's request, select appropriate services,
-        determine execution order, establish dependencies, and generate a complete
-        workflow manifest with parameter values and output references.
+        This tool provides complete end-to-end workflow lifecycle management:
+        1. Generation: Uses LLM to analyze your request and generate a workflow manifest
+        2. Basic Validation: Checks basic structure (detailed validation by workflow engine)
+        3. Execution: Submits the workflow to the workflow engine for execution
         
         Args:
             user_query: Natural language description of the desired workflow.
@@ -369,22 +374,52 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                        - "Assemble my reads and then annotate the resulting genome"
                        - "Perform comprehensive genome analysis for E. coli"
                        - "Map RNA-seq reads to reference genome and analyze expression"
+                       - "Run BLAST on my sequences then build a phylogenetic tree"
+            
+            auto_execute: If True (default), submit workflow for execution after generation.
+                         If False, only generate and validate the workflow without executing.
+                         
             token: Authentication token (optional - will use default if not provided)
             
         Returns:
-            JSON workflow manifest with workflow_id, base_context, and steps array.
-            Each step includes the service name (app), dependencies (depends_on), 
-            parameters (params), and output definitions (outputs). The manifest uses
-            ${} variable substitution for data flow between steps.
-            
-        Note: The generated manifest is designed to be consumed by a workflow execution
-        engine that will resolve variables and submit jobs in dependency order.
+            Dictionary with:
+            - If auto_execute=True and successful:
+              {
+                "workflow_id": "wf_123...",
+                "status": "pending",
+                "workflow_json": {...},
+                "submitted_at": "2026-02-04T10:30:00Z",
+                "message": "Workflow created and submitted for execution",
+                "status_url": "http://.../workflows/wf_123/status"
+              }
+              
+            - If auto_execute=False:
+              {
+                "workflow_json": {...},
+                "message": "Workflow generated and validated (not submitted)"
+              }
+              
+            - On error:
+              {
+                "error": "Error description",
+                "errorType": "GENERATION_FAILED | VALIDATION_FAILED | SUBMISSION_FAILED",
+                "stage": "generation | validation | submission",
+                "hint": "Helpful suggestion",
+                "partial_workflow": {...}  // If available
+              }
+        
+        Notes:
+            - The workflow engine must be running and configured for execution
+            - If the workflow engine is unavailable, the tool will return the generated 
+              workflow JSON with a warning
+            - Use get_job_details() to check the status of executed workflows
         """
         if not user_query:
             return {
                 "error": "user_query parameter is required",
                 "errorType": "INVALID_PARAMETERS",
-                "example": "generate_workflow_manifest(user_query='Assemble reads and annotate the genome')",
+                "example": "create_and_execute_workflow(user_query='Assemble reads and annotate the genome')",
+                "hint": "Provide a natural language description of your desired workflow",
                 "source": "bvbrc-service"
             }
         
@@ -393,7 +428,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         if not auth_token:
             return {
                 "error": "No authentication token available",
-                "errorType": "INVALID_PARAMETERS",
+                "errorType": "AUTHENTICATION_FAILED",
+                "hint": "Please provide a valid authentication token",
                 "source": "bvbrc-service"
             }
         
@@ -402,12 +438,13 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         if not user_id:
             return {
                 "error": "Could not extract user ID from token",
-                "errorType": "INVALID_PARAMETERS",
+                "errorType": "AUTHENTICATION_FAILED",
+                "hint": "The provided token is invalid or malformed",
                 "source": "bvbrc-service"
             }
         
         try:
-            # Load LLM configuration
+            # Load configuration
             import os
             import json as json_lib
             config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
@@ -419,13 +456,18 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             from common.llm_client import create_llm_client_from_config
             llm_client = create_llm_client_from_config(config)
             
-            # Generate workflow manifest
-            result = await generate_workflow_manifest_internal(
+            # Get workflow engine configuration
+            workflow_engine_config = config.get('workflow_engine', {})
+            
+            # Create and optionally execute workflow
+            result = await create_and_execute_workflow_internal(
                 user_query=user_query,
                 api=api,
                 token=auth_token,
                 user_id=user_id,
-                llm_client=llm_client
+                llm_client=llm_client,
+                auto_execute=auto_execute,
+                workflow_engine_config=workflow_engine_config
             )
             
             return result
@@ -433,17 +475,18 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         except FileNotFoundError as e:
             return {
                 "error": f"Configuration file not found: {str(e)}",
-                "errorType": "NOT_FOUND",
-                "hint": "Ensure config/config.json exists with 'llm' section",
+                "errorType": "CONFIGURATION_ERROR",
+                "hint": "Ensure config/config.json exists with 'llm' and 'workflow_engine' sections",
                 "source": "bvbrc-service"
             }
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"Error in generate_workflow_manifest: {error_trace}", file=sys.stderr)
+            print(f"Error in create_and_execute_workflow: {error_trace}", file=sys.stderr)
             return {
                 "error": str(e),
-                "errorType": "API_ERROR",
+                "errorType": "UNKNOWN_ERROR",
+                "stage": "initialization",
                 "traceback": error_trace,
                 "source": "bvbrc-service"
             }
