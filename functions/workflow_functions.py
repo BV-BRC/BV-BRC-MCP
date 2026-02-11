@@ -159,7 +159,8 @@ async def select_services_for_workflow(
     api: JsonRpcCaller,
     token: str,
     user_id: str,
-    llm_client: LLMClient
+    llm_client: LLMClient,
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     STEP 1: Select which services are needed for the workflow.
@@ -170,6 +171,7 @@ async def select_services_for_workflow(
         token: Authentication token
         user_id: User ID for workspace paths
         llm_client: LLM client instance
+        session_id: Optional session ID for retrieving session facts
         
     Returns:
         Dictionary with:
@@ -183,11 +185,26 @@ async def select_services_for_workflow(
         # Load service selection system prompt
         system_prompt = load_prompt_file('workflow_service_selection.txt')
         
+        # Get session facts if session_id is provided
+        session_facts_text = ""
+        if session_id:
+            try:
+                from common.session_facts_service import format_session_facts_for_llm
+                session_facts_text = format_session_facts_for_llm(session_id, user_id)
+                if session_facts_text and session_facts_text != "No session facts available.":
+                    print(f"STEP 1: Including session facts from session {session_id}", file=sys.stderr)
+                    session_facts_text = f"\n\n{session_facts_text}\n"
+                else:
+                    session_facts_text = ""
+            except Exception as e:
+                print(f"Warning: Could not retrieve session facts: {e}", file=sys.stderr)
+                session_facts_text = ""
+        
         # Build simple user prompt with just the query
         user_prompt = f"""Select the appropriate BV-BRC services for this user request:
 
 USER QUERY: {user_query}
-
+{session_facts_text}
 Return a JSON object with "services" array and "reasoning" string."""
         
         # Make the LLM call
@@ -246,7 +263,8 @@ async def generate_workflow_with_services(
     user_id: str,
     llm_client: LLMClient,
     validation_error: Optional[str] = None,
-    previous_workflow: Optional[Dict[str, Any]] = None
+    previous_workflow: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     STEP 2: Generate workflow manifest with detailed parameters for selected services.
@@ -258,6 +276,7 @@ async def generate_workflow_with_services(
         token: Authentication token
         user_id: User ID for workspace paths
         llm_client: LLM client instance
+        session_id: Optional session ID for retrieving session facts
         
     Returns:
         Dict containing workflow_json and prompt_payload, or error details
@@ -298,17 +317,41 @@ async def generate_workflow_with_services(
         # Get required parameter rules for ONLY the selected services
         selected_required_params = {}
         for service_name in selected_services:
-            if service_name in required_params_config:
-                selected_required_params[service_name] = required_params_config[service_name]
+            api_name = friendly_to_api.get(service_name, service_name)
+            required_params = (
+                required_params_config.get(service_name)
+                or required_params_config.get(api_name)
+            )
+            if required_params:
+                selected_required_params[service_name] = required_params
+        
+        # Get session facts if session_id is provided
+        session_facts_text = ""
+        if session_id:
+            try:
+                from common.session_facts_service import format_session_facts_for_llm
+                session_facts_text = format_session_facts_for_llm(session_id, user_id)
+                if session_facts_text and session_facts_text != "No session facts available.":
+                    print(f"STEP 2: Including session facts from session {session_id}", file=sys.stderr)
+                    session_facts_text = f"\n\n{session_facts_text}\n"
+                else:
+                    session_facts_text = ""
+            except Exception as e:
+                print(f"Warning: Could not retrieve session facts: {e}", file=sys.stderr)
+                session_facts_text = ""
         
         # Load parameter generation system prompt
         system_prompt = load_prompt_file('workflow_parameter_generation.txt')
         
         # Build focused user prompt with ONLY selected service details
+        session_context = ""
+        if session_facts_text:
+            session_context = f"\n\nSESSION CONTEXT:\nThe following session facts provide contextual information from previous user interactions. Use this knowledge base to enhance your understanding and populate workflow parameters appropriately.\n{session_facts_text}"
+        
         user_prompt = f"""Generate a complete workflow manifest for the following user request using THESE SPECIFIC SERVICES:
 
 USER QUERY: {user_query}
-
+{session_context}
 SELECTED SERVICES: {json.dumps(selected_services)}
 
 DETAILED SERVICE SPECIFICATIONS (read these carefully for exact parameter names and requirements):
@@ -418,7 +461,8 @@ async def generate_workflow_manifest_internal(
     user_id: str,
     llm_client: LLMClient,
     validation_error: Optional[str] = None,
-    previous_workflow: Optional[Dict[str, Any]] = None
+    previous_workflow: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Generate a workflow manifest using TWO-STEP LLM-based planning.
@@ -432,6 +476,7 @@ async def generate_workflow_manifest_internal(
         token: Authentication token
         user_id: User ID for workspace paths
         llm_client: LLM client instance
+        session_id: Optional session ID for retrieving session facts
         
     Returns:
         Dict containing workflow_json and prompt_payload, or error details
@@ -443,7 +488,8 @@ async def generate_workflow_manifest_internal(
             api=api,
             token=token,
             user_id=user_id,
-            llm_client=llm_client
+            llm_client=llm_client,
+            session_id=session_id
         )
         
         # Check if selection failed
@@ -470,7 +516,8 @@ async def generate_workflow_manifest_internal(
             user_id=user_id,
             llm_client=llm_client,
             validation_error=validation_error,
-            previous_workflow=previous_workflow
+            previous_workflow=previous_workflow,
+            session_id=session_id
         )
         
         return workflow_result
@@ -539,7 +586,8 @@ async def create_and_execute_workflow_internal(
     user_id: str,
     llm_client: LLMClient,
     auto_execute: bool = True,
-    workflow_engine_config: Optional[Dict[str, Any]] = None
+    workflow_engine_config: Optional[Dict[str, Any]] = None,
+    session_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Generate a workflow from natural language, validate it, and optionally submit it for execution.
@@ -554,6 +602,7 @@ async def create_and_execute_workflow_internal(
         llm_client: LLM client instance
         auto_execute: If True, submit workflow to engine after generation (default: True)
         workflow_engine_config: Workflow engine configuration dict (optional)
+        session_id: Optional session ID for retrieving session facts
         
     Returns:
         Dictionary with workflow_id, status, and workflow_json if successful,
@@ -578,7 +627,8 @@ async def create_and_execute_workflow_internal(
                 user_id=user_id,
                 llm_client=llm_client,
                 validation_error=validation_error,
-                previous_workflow=previous_workflow
+                previous_workflow=previous_workflow,
+                session_id=session_id
             )
             
             # Check if generation returned an error

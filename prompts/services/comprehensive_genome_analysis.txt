@@ -4,11 +4,61 @@ The parameters for the comprehensive genome analysis app are:
   - output_file: Output basename (required)
   - paired_end_libs: Paired-end read libraries (optional)
   - single_end_libs: Single-end read libraries (optional)
-  - srr_ids: SRA Run IDs (optional)
+  - srr_ids: SRA Run IDs - array of strings (optional)
   - recipe: Assembly algorithm (auto, unicycler, flye, meta-flye, canu, spades, meta-spades, plasmid-spades, single-cell, megahit)
   - scientific_name: Scientific name of organism (required)
   - taxonomy_id: NCBI Taxonomy ID (required)
   - domain: Organism domain - Bacteria/Archaea/Viruses/auto (required)
+  - my_label: User-defined label for the job (optional)
+  - genome_size: Expected genome size in base pairs (optional)
+  - expected_genome_size: Expected genome size with units (optional)
+  - genome_size_units: Units for genome size - K/M/G (optional)
+  - normalize: Normalize read coverage (optional, boolean)
+  - trim: Trim reads (optional, boolean)
+  - coverage: Target coverage depth (optional, integer)
+  - racon_iter: Number of Racon polishing iterations (optional, integer)
+  - pilon_iter: Number of Pilon polishing iterations (optional, integer)
+  - min_contig_len: Minimum contig length to retain (optional, integer)
+  - min_contig_cov: Minimum contig coverage to retain (optional, integer)
+  - filtlong: Use Filtlong for read filtering (optional, boolean)
+  - target_depth: Target read depth for subsampling (optional, integer)
 
 At least one input source (paired_end_libs, single_end_libs, or srr_ids) must be provided.
+
+## Complete Job Specification Example
+
+Here is a complete example of a comprehensive genome analysis job specification with all commonly used parameters:
+
+```json
+{
+    "input_type": "reads",
+    "output_path": "/USERNAME/home/WorkspaceOutputFolder/ProjectName",
+    "output_file": "GenomeAnalysis",
+    "srr_ids": [
+        "SRR1234567"
+    ],
+    "recipe": "auto",
+    "scientific_name": "Escherichia coli",
+    "taxonomy_id": "562",
+    "domain": "Bacteria",
+    "my_label": "MyGenomeAnalysis",
+    "genome_size": 5000000,
+    "expected_genome_size": 5,
+    "genome_size_units": "M",
+    "normalize": true,
+    "trim": true,
+    "coverage": 200,
+    "racon_iter": 2,
+    "pilon_iter": 2,
+    "min_contig_len": 300,
+    "min_contig_cov": 5,
+    "filtlong": true,
+    "target_depth": 200
+}
+```
+
+### Important Notes:
+- The `output_path` should use the pattern `/USERNAME/home/WorkspaceOutputFolder/ProjectName`
+- `recipe: "auto"` lets the system automatically select the best assembly algorithm
+- Coverage and depth parameters help optimize the assembly quality and computational resources
 

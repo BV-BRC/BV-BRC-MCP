@@ -118,9 +118,15 @@ Return a JSON object with this EXACT structure:
    - Do NOT omit any parameters shown in the example
    - Match the output structure exactly (output names, paths, etc.)
 
-2. Read the user's original query to understand their specific data/requirements
+2. **USE SESSION FACTS**: If SESSION FACTS are provided:
+   - Session facts contain contextual information from the user's previous interactions
+   - Use session facts as a knowledge base to enhance your understanding of the user's context
+   - Apply relevant facts to populate workflow parameters when they align with the user's query
+   - Session facts can help infer missing parameters, understand user preferences, and maintain continuity across interactions
 
-3. For EACH service you're asked to include:
+3. Read the user's original query to understand their specific data/requirements
+
+4. For EACH service you're asked to include:
    - Read the complete service specification provided (including any workflow examples and checklists)
    - If there's a "REQUIRED PARAMETERS CHECKLIST", verify you've included EVERY item
    - Identify ALL parameters marked as "(required)"
@@ -130,17 +136,17 @@ Return a JSON object with this EXACT structure:
      - Only use values listed in enum_params for those fields
    - Pay special attention to parameter formats (arrays vs strings, objects vs primitives)
 
-4. Use the output patterns provided to define step outputs correctly
+5. Use the output patterns provided to define step outputs correctly
 
-5. Set up dependencies between steps (depends_on) based on data flow
+6. Set up dependencies between steps (depends_on) based on data flow
 
-6. Use variable substitution to pass outputs between steps
+7. Use variable substitution to pass outputs between steps
 
-7. Return ONLY the JSON workflow manifest (no markdown, no additional text)
+8. Return ONLY the JSON workflow manifest (no markdown, no additional text)
 
-8. **CRITICAL**: When you see arrays in examples (like srr_libs), they must be actual JSON arrays, NOT strings!
+9. **CRITICAL**: When you see arrays in examples (like srr_libs), they must be actual JSON arrays, NOT strings!
 
-9. **BEFORE SUBMITTING**: Verify you've included ALL required parameters from the example, checklist, and REQUIRED PARAMETER RULES
+10. **BEFORE SUBMITTING**: Verify you've included ALL required parameters from the example, checklist, REQUIRED PARAMETER RULES, and session facts
 
 ## Common Pitfalls to Avoid
 

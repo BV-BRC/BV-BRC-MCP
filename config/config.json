@@ -29,5 +29,23 @@
         "api_url": "http://localhost:8000/api/v1",
         "timeout": 30,
         "enabled": true
+    },
+    "mongodb": {
+        "url": "mongodb://140.221.78.16:27018/copilot",
+        "database": "copilot",
+        "collections": {
+            "session_memory": "session_memory",
+            "chat_sessions": "chat_sessions"
+        },
+        "connection_options": {
+            "maxPoolSize": 50,
+            "minPoolSize": 10,
+            "maxIdleTimeMS": 30000,
+            "serverSelectionTimeoutMS": 5000,
+            "connectTimeoutMS": 10000,
+            "socketTimeoutMS": 45000,
+            "retryWrites": true,
+            "retryReads": true
+        }
     }
 }

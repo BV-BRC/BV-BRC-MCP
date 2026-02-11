@@ -358,7 +358,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
     async def create_and_execute_workflow(
         user_query: str = None, 
         auto_execute: bool = True,
-        token: Optional[str] = None
+        token: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create a workflow from natural language description and optionally execute it.
@@ -380,6 +381,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                          If False, only generate and validate the workflow without executing.
                          
             token: Authentication token (optional - will use default if not provided)
+            
+            session_id: Optional session ID for retrieving session facts to enhance workflow generation
             
         Returns:
             Dictionary with:
@@ -467,7 +470,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 user_id=user_id,
                 llm_client=llm_client,
                 auto_execute=auto_execute,
-                workflow_engine_config=workflow_engine_config
+                workflow_engine_config=workflow_engine_config,
+                session_id=session_id
             )
             
             return result

@@ -3,7 +3,8 @@ from fastmcp import FastMCP
 from functions.workspace_functions import (
     workspace_ls, workspace_get_file_metadata, workspace_download_file,
     workspace_upload, workspace_search, workspace_create_genome_group,
-    workspace_create_feature_group, workspace_get_genome_group_ids, workspace_get_feature_group_ids
+    workspace_create_feature_group, workspace_get_genome_group_ids, workspace_get_feature_group_ids,
+    workspace_preview_file
 )
 from common.json_rpc import JsonRpcCaller
 from common.token_provider import TokenProvider
@@ -237,6 +238,35 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         print(f"Downloading file from path: {resolved_path}, user_id: {user_id}, output_file: {output_file}, return_data: {return_data}")
 
         result = await workspace_download_file(api, resolved_path, auth_token, output_file, return_data)
+        return result
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def workspace_preview_file_tool(token: Optional[str] = None, path: str = None) -> dict:
+        """Preview a file from the workspace by downloading only the first portion.
+        
+        This tool downloads a preview of the file (first portion) without downloading the entire file.
+        Useful for quickly viewing the beginning of large files.
+
+        Args:
+            token: Authentication token (optional - will use default if not provided)
+            path: Path to the file to preview (relative to user's home directory).
+        """
+        # Get the appropriate token
+        auth_token = token_provider.get_token(token)
+        if not auth_token:
+            return {
+                "error": "No authentication token available",
+                "errorType": "AUTHENTICATION_ERROR",
+                "source": "bvbrc-workspace"
+            }
+
+        # Extract user_id from token for path resolution and logging
+        user_id = extract_userid_from_token(auth_token)
+        resolved_path = resolve_relative_path(path, user_id)
+
+        print(f"Previewing file from path: {resolved_path}, user_id: {user_id}")
+
+        result = await workspace_preview_file(api, resolved_path, auth_token)
         return result
 
     @mcp.tool()

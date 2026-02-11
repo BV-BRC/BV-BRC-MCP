@@ -299,6 +299,63 @@ async def workspace_download_file(api: JsonRpcCaller, path: str, token: str, out
             "source": "bvbrc-workspace"
         }
 
+async def workspace_preview_file(api: JsonRpcCaller, path: str, token: str) -> dict:
+    """
+    Preview a file from the workspace by downloading only the first portion using byte ranges.
+    This function uses HTTP Range headers internally to download only a portion of the file.
+    
+    Args:
+        api: JsonRpcCaller instance configured with workspace URL and token
+        path: Path to the file to preview
+        token: Authentication token for API calls
+    Returns:
+        Dictionary containing the preview data (text for text files, base64 for binary files)
+    """
+    # Internal byte range parameters - not exposed to user
+    # Default to first 8KB (8192 bytes) for preview - kept below common file save thresholds
+    PREVIEW_BYTE_RANGE = 8192
+    
+    try:
+        download_url_obj = await _get_download_url(api, path, token)
+        download_url = download_url_obj[0][0]
+        
+        headers = {
+            "Authorization": token,
+            "Range": f"bytes=0-{PREVIEW_BYTE_RANGE - 1}"
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(download_url, headers=headers)
+            # 206 Partial Content is expected for range requests, treat as success
+            if response.status_code not in (200, 206):
+                response.raise_for_status()
+            content = response.content
+            
+            # Try to decode as text first
+            try:
+                text_content = content.decode('utf-8')
+                return {
+                    "data": text_content,
+                    "preview_size": len(content),
+                    "is_preview": True,
+                    "source": "bvbrc-workspace"
+                }
+            except UnicodeDecodeError:
+                # If it's binary, encode as base64
+                base64_content = base64.b64encode(content).decode('utf-8')
+                return {
+                    "data": f"<base64_encoded_data>{base64_content}</base64_encoded_data>",
+                    "preview_size": len(content),
+                    "is_preview": True,
+                    "source": "bvbrc-workspace"
+                }
+    except Exception as e:
+        return {
+            "error": f"Error previewing file: {str(e)}",
+            "errorType": "API_ERROR",
+            "source": "bvbrc-workspace"
+        }
+
 async def _get_download_url(api: JsonRpcCaller, path: str, token: str) -> str:
     """
     Get the download URL of a file from the workspace using the JSON-RPC API.
