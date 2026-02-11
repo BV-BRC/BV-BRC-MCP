@@ -33,8 +33,7 @@ A Model Context Protocol (MCP) server for the Bacterial-Viral Bioinformatics res
   - And many more...
 
 ### Workspace Tools
-- `workspace_ls_tool`: List workspace contents
-- `workspace_search_tool`: Search workspace for files
+- `workspace_browse_tool`: Unified browse/search tool (search recursively or inspect path as folder listing/file metadata)
 - `workspace_get_file_metadata_tool`: Get file metadata
 - `workspace_download_file_tool`: Download workspace files
 - `workspace_upload`: Upload files to workspace

@@ -176,12 +176,8 @@
       "description": "FASTQ utilities service"
     },
     {
-      "name": "workspace_ls_tool",
-      "description": "List the contents of the workspace"
-    },
-    {
-      "name": "workspace_search_tool",
-      "description": "Search the workspace for a given term"
+      "name": "workspace_browse_tool",
+      "description": "Browse workspace paths; optionally search recursively, list folders, or return file metadata"
     },
     {
       "name": "workspace_get_file_metadata_tool",

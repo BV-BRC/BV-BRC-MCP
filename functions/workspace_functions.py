@@ -8,7 +8,14 @@ import json
 import sys
 import base64
 
-async def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_types: str | List[str] = None) -> dict:
+async def workspace_ls(
+    api: JsonRpcCaller,
+    paths: List[str],
+    token: str,
+    file_types: List[str] = None,
+    sort_by: str = None,
+    sort_order: str = None
+) -> dict:
     """
     List the contents of a specific workspace directory using the JSON-RPC API.
     This is NOT a generic search function, use `workspace_search` for search functionality.
@@ -17,23 +24,19 @@ async def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_ty
         api: JsonRpcCaller instance configured with workspace URL and token
         paths: List of paths to list
         token: Authentication token for API calls
-        file_type: Optional file type(s) to filter by. Can be a string or list of strings
-                   (e.g., 'contigs', 'folder', 'unspecified', 'genome_group', 'feature_group', 'reads').
-                   If provided, only files/objects with these types will be returned.
+        file_types: Optional list of file types to filter by (e.g., ['contigs', 'folder', 'unspecified']).
+                    If provided, only files/objects with these types will be returned.
+        sort_by: Optional sort field. Valid options: creation_time, name, size, type.
+        sort_order: Optional sort direction. Valid options: asc, desc.
     Returns:
         List of workspace items
     """
     try:
         # Build API call parameters
-        # Enable recursive search when file_type is provided to search subdirectories
+        # Enable recursive search when file_types is provided to search subdirectories
         if file_types:
-            # Convert single string to list if needed
-            if not file_types:
-                file_types_list = ['unspecified']
-            elif isinstance(file_types, str):
-                file_types_list = [file_types]
-            else:
-                file_types_list = file_types
+            # file_types is already a list
+            file_types_list = file_types if file_types else ['unspecified']
 
             # Use recursive search format matching workspace_search when filtering by type
             # Pass type as array directly (API expects array format for type filtering)
@@ -54,6 +57,12 @@ async def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_ty
                 "includeSubDirs": False,
                 "paths": paths
             }
+        # Pass backend-supported sort options through directly when provided
+        if sort_by:
+            api_params["sort_by"] = sort_by
+        if sort_order:
+            api_params["sort_order"] = sort_order
+
         # Only include file_types_list in print if it was defined
         print_msg = f"workspace_ls file_types: {file_types}, Query params: {json.dumps(api_params, indent=2)}"
         if file_types:
@@ -76,21 +85,32 @@ async def workspace_ls(api: JsonRpcCaller, paths: List[str], token: str, file_ty
             "source": "bvbrc-workspace"
         }
 
-async def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_term: str = None, file_extension: str = None, file_types: str | List[str] = None, token: str = None) -> dict:
+async def workspace_search(
+    api: JsonRpcCaller,
+    paths: List[str] = None,
+    filename_search_terms: List[str] = None,
+    file_extension: List[str] = None,
+    file_types: List[str] = None,
+    token: str = None,
+    sort_by: str = None,
+    sort_order: str = None
+) -> dict:
     """
     Search the entire workspace for a given term and/or file extension and/or file type.
 
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         paths: List of paths to search
-        search_term: Optional term to search for in file names
-        file_extension: Optional file extension to filter by (e.g., 'py', 'txt', 'json').
-                       Can include or exclude the leading dot.
-        file_types: Optional file type(s) to filter by. Can be a string or list of strings
-                   (e.g., 'contigs', 'folder', 'unspecified', 'genome_group', 'feature_group', 'reads').
+        filename_search_terms: Optional list of terms to search for within file/object names. All terms must appear in the name (AND logic).
+                               Example: ["genome", "bacteria"] will match files containing both words in their name.
+        file_extension: Optional list of file extensions to filter by (e.g., ['py', 'txt', 'json']).
+                       Can include or exclude the leading dot. Multiple extensions use OR logic.
+        file_types: Optional list of file types to filter by (e.g., ['contigs', 'folder', 'unspecified']).
                    If provided, only files/objects with these types will be returned. This filters by the workspace object type,
                    not by file extension, so it can match files with different extensions that share the same type.
         token: Authentication token for API calls
+        sort_by: Optional sort field. Valid options: creation_time, name, size, type.
+        sort_order: Optional sort direction. Valid options: asc, desc.
     Returns:
         List of matching workspace items
     """
@@ -104,83 +124,161 @@ async def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_t
             }
         paths = [f"/{user_id}/home"]
 
-    # At least one of search_term, file_extension, or file_types must be provided
-    if not search_term and not file_extension and not file_types:
-        return {
-            "error": "At least one of search_term, file_extension, or file_types parameter is required",
-            "errorType": "INVALID_PARAMETERS",
-            "source": "bvbrc-workspace"
-        }
-
     # Build query conditions based on what's provided
     query_conditions = {}
-    conditions = []
+    name_conditions = []
+    type_conditions = []
 
-    # Add search term condition if provided
-    if search_term:
-        conditions.append({
-            "name": {
-                "$regex": search_term,
-                "$options": "i"
-            }
-        })
+    # Add filename search term condition(s) if provided
+    if filename_search_terms:
+        # filename_search_terms is already a list
+        name_conditions.extend(filename_search_terms)
 
-    # Add file extension filter if provided
+    # Add file extension filter(s) if provided
     if file_extension:
-        # Normalize extension: remove leading dot if present, add it back for regex
-        ext = file_extension.lstrip('.')
-        # Create regex pattern that matches files ending with the extension
-        # This ensures we match the extension at the end of the filename
-        ext_pattern = f"\\.{ext}$"
-        conditions.append({
-            "name": {
-                "$regex": ext_pattern,
-                "$options": "i"
-            }
-        })
+        # file_extension is already a list
+        for ext in file_extension:
+            # Normalize extension: remove leading dot if present, add it back for regex
+            ext = ext.lstrip('.')
+            # Create regex pattern that matches files ending with the extension
+            # This ensures we match the extension at the end of the filename
+            ext_pattern = f"\\.{ext}$"
+            name_conditions.append(ext_pattern)
 
     # Add file type filter if provided
     if file_types:
-        # Convert single string to list if needed
-        if isinstance(file_types, str):
-            file_types_list = [file_types]
-        else:
-            file_types_list = file_types
-        
+        # file_types is already a list
         # Add type filter condition
-        if len(file_types_list) == 1:
-            conditions.append({
-                "type": file_types_list[0]
+        if len(file_types) == 1:
+            type_conditions.append({
+                "type": file_types[0]
             })
         else:
-            conditions.append({
-                "type": {"$in": file_types_list}
+            type_conditions.append({
+                "type": {"$in": file_types}
             })
 
     # Build final query conditions
-    if len(conditions) == 1:
-        # Single condition, no need for $and
-        query_conditions = conditions[0]
+    # NOTE: The workspace API does not support $and operator despite using MongoDB syntax.
+    # Instead, we combine multiple name-based regex patterns into a single regex using lookahead.
+    if len(name_conditions) == 0 and len(type_conditions) == 0:
+        # No explicit filters: perform recursive search under provided paths
+        query_conditions = None
+    elif len(name_conditions) > 0 and len(type_conditions) == 0:
+        # Only name-based filters
+        if len(name_conditions) == 1:
+            # Single name condition
+            query_conditions = {
+                "name": {
+                    "$regex": name_conditions[0],
+                    "$options": "i"
+                }
+            }
+        else:
+            # Multiple name conditions: combine using regex lookahead
+            # Pattern: (?=.*pattern1)(?=.*pattern2)....*
+            # For extension patterns ending with $, we need special handling
+            combined_pattern = ""
+            end_patterns = []
+            
+            for pattern in name_conditions:
+                if pattern.endswith("$"):
+                    # Extension pattern - save for end (OR logic for multiple extensions)
+                    end_patterns.append(pattern)
+                else:
+                    # Search term - add as lookahead (AND logic for multiple terms)
+                    combined_pattern += f"(?=.*{pattern})"
+            
+            if end_patterns:
+                # Combine lookaheads with the end-anchored pattern(s)
+                if len(end_patterns) > 1:
+                    # Multiple extensions: OR them together
+                    ext_or_pattern = "(" + "|".join(end_patterns) + ")"
+                    combined_pattern += ".*" + ext_or_pattern
+                else:
+                    # Single extension
+                    combined_pattern += ".*" + end_patterns[0]
+            else:
+                # No end anchor, just match anything after lookaheads
+                combined_pattern += ".*"
+            
+            query_conditions = {
+                "name": {
+                    "$regex": combined_pattern,
+                    "$options": "i"
+                }
+            }
+    elif len(name_conditions) == 0 and len(type_conditions) > 0:
+        # Only type-based filters
+        query_conditions = type_conditions[0]
     else:
-        # Multiple conditions, use $and
-        query_conditions = {"$and": conditions}
+        # Both name and type conditions
+        # Since we can't use $and, we need to handle this differently
+        # We'll apply name filter in the query and filter by type client-side after
+        # Actually, let's try putting both in a dict - MongoDB should support multiple fields
+        if len(name_conditions) == 1:
+            name_regex = name_conditions[0]
+        else:
+            # Combine name conditions
+            combined_pattern = ""
+            end_patterns = []
+            
+            for pattern in name_conditions:
+                if pattern.endswith("$"):
+                    # Extension pattern - save for end (OR logic for multiple extensions)
+                    end_patterns.append(pattern)
+                else:
+                    # Search term - add as lookahead (AND logic for multiple terms)
+                    combined_pattern += f"(?=.*{pattern})"
+            
+            if end_patterns:
+                # Combine lookaheads with the end-anchored pattern(s)
+                if len(end_patterns) > 1:
+                    # Multiple extensions: OR them together
+                    ext_or_pattern = "(" + "|".join(end_patterns) + ")"
+                    combined_pattern += ".*" + ext_or_pattern
+                else:
+                    # Single extension
+                    combined_pattern += ".*" + end_patterns[0]
+            else:
+                # No end anchor, just match anything after lookaheads
+                combined_pattern += ".*"
+            
+            name_regex = combined_pattern
+        
+        # Try combining name and type in a single dict (implicit AND in MongoDB)
+        query_conditions = {
+            "name": {
+                "$regex": name_regex,
+                "$options": "i"
+            }
+        }
+        # Add type condition to the same dict
+        query_conditions.update(type_conditions[0])
 
     try:
-        result = await api.acall("Workspace.ls", {
+        api_params = {
             "recursive": True,
             "excludeDirectories": False,
             "excludeObjects": False,
             "includeSubDirs": True,
-            "paths": paths,
-            "query": query_conditions
-        },1, token)
+            "paths": paths
+        }
+        if query_conditions is not None:
+            api_params["query"] = query_conditions
+        if sort_by:
+            api_params["sort_by"] = sort_by
+        if sort_order:
+            api_params["sort_order"] = sort_order
+
+        result = await api.acall("Workspace.ls", api_params, 1, token)
         
         # Standardize response structure
         result_list = result if isinstance(result, list) else [result]
         return {
             "items": result_list,
             "count": len(result_list),
-            "searchTerm": search_term,
+            "filename_search_terms": filename_search_terms,
             "paths": paths,
             "source": "bvbrc-workspace"
         }
@@ -190,6 +288,141 @@ async def workspace_search(api: JsonRpcCaller, paths: List[str] = None, search_t
             "errorType": "API_ERROR",
             "source": "bvbrc-workspace"
         }
+
+async def workspace_browse(
+    api: JsonRpcCaller,
+    token: str,
+    path: str = None,
+    search: bool = False,
+    filename_search_terms: List[str] = None,
+    file_extension: List[str] = None,
+    file_types: List[str] = None,
+    sort_by: str = None,
+    sort_order: str = None,
+    tool_name: str = "workspace_browse_tool"
+) -> dict:
+    """
+    Unified workspace browser entrypoint.
+
+    - If search is True: perform recursive search under path (or user home by default).
+    - If search is False: inspect path and return folder listing or file/object metadata.
+
+    Args:
+        api: JsonRpcCaller instance configured with workspace URL and token
+        token: Authentication token for API calls
+        path: Path to inspect/search. Defaults to user home if not provided.
+        search: If True, perform recursive search. If False, inspect path and return listing or metadata.
+        filename_search_terms: Optional list of terms to search within file/object names (used when search=True). 
+                               All terms must appear in the filename (AND logic).
+        file_extension: Optional list of extension filters (used when search=True). Multiple extensions use OR logic.
+        file_types: Optional list of workspace type filters (used in search and folder listing modes).
+        sort_by: Optional sort field. Valid options: creation_time, name, size, type.
+        sort_order: Optional sort direction. Valid options: asc, desc.
+        tool_name: Name of the calling tool (for response envelope).
+
+    Returns a consistent response envelope with all data nested under "result":
+      {
+        "result": {
+          "items": <array> | "metadata": <dict>,  // items for search/list, metadata for file/object
+          "tool_name": <tool name>,
+          "result_type": "search_result" | "list_result" | "metadata_result",
+          "count": <number>,  // present for search_result and list_result
+          "path": <workspace path>,
+          "source": "bvbrc-workspace"
+        }
+      }
+    """
+    if not token:
+        return {
+            "error": "Authentication token not provided",
+            "errorType": "INVALID_PARAMETERS",
+            "source": "bvbrc-workspace"
+        }
+
+    if not path or path == '/':
+        user_id = _get_user_id_from_token(token)
+        if not user_id:
+            return {
+                "error": "Unable to derive user id from token",
+                "errorType": "INVALID_PARAMETERS",
+                "source": "bvbrc-workspace"
+            }
+        path = f"/{user_id}/home"
+
+    if search:
+        search_result = await workspace_search(
+            api=api,
+            paths=[path],
+            filename_search_terms=filename_search_terms,
+            file_extension=file_extension,
+            file_types=file_types,
+            token=token,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+        if "error" in search_result:
+            return search_result
+
+        items = search_result.get("items", [])
+        return {
+            "result": {
+                "items": items,
+                "tool_name": tool_name,
+                "result_type": "search_result",
+                "count": len(items),
+                "path": path,
+                "source": "bvbrc-workspace"
+            }
+        }
+
+    metadata_result = await workspace_get_object(api, path, metadata_only=True, token=token)
+    if "error" in metadata_result:
+        return metadata_result
+
+    metadata = metadata_result.get("metadata")
+    if not metadata or not isinstance(metadata, dict):
+        return {
+            "error": "Invalid metadata response",
+            "errorType": "INVALID_RESPONSE",
+            "source": "bvbrc-workspace"
+        }
+
+    auto_meta = metadata.get("autoMeta") if isinstance(metadata.get("autoMeta"), dict) else {}
+    is_folder = metadata.get("type") == "folder" or auto_meta.get("is_folder") == 1
+
+    if is_folder:
+        list_result = await workspace_ls(
+            api=api,
+            paths=[path],
+            token=token,
+            file_types=file_types,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+        if "error" in list_result:
+            return list_result
+
+        items = list_result.get("items", [])
+        return {
+            "result": {
+                "items": items,
+                "tool_name": tool_name,
+                "result_type": "list_result",
+                "count": len(items),
+                "path": path,
+                "source": "bvbrc-workspace"
+            }
+        }
+
+    return {
+        "result": {
+            "metadata": metadata,
+            "tool_name": tool_name,
+            "result_type": "metadata_result",
+            "path": path,
+            "source": "bvbrc-workspace"
+        }
+    }
 
 async def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> dict:
     """

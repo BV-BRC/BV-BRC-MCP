@@ -1,10 +1,10 @@
 
 from fastmcp import FastMCP
 from functions.workspace_functions import (
-    workspace_ls, workspace_get_file_metadata, workspace_download_file,
-    workspace_upload, workspace_search, workspace_create_genome_group,
+    workspace_get_file_metadata, workspace_download_file,
+    workspace_upload, workspace_create_genome_group,
     workspace_create_feature_group, workspace_get_genome_group_ids, workspace_get_feature_group_ids,
-    workspace_preview_file
+    workspace_preview_file, workspace_browse
 )
 from common.json_rpc import JsonRpcCaller
 from common.token_provider import TokenProvider
@@ -83,7 +83,7 @@ def resolve_relative_path(path: str, user_id: str) -> str:
     Returns:
         Absolute path
     """
-    if not path:
+    if not path or path == '/':
         return get_user_home_path(user_id)
 
     home_path = get_user_home_path(user_id)
@@ -102,21 +102,36 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
     """Register workspace tools with the FastMCP server"""
     
     @mcp.tool()
-    async def workspace_ls_tool(token: Optional[str] = None, paths: List[str] = None, file_types: Optional[str | List[str]] = None) -> dict:
-        """List the contents of the workspace.
+    async def workspace_browse_tool(
+        token: Optional[str] = None,
+        path: Optional[str] = None,
+        search: bool = False,
+        filename_search_terms: Optional[List[str]] = None,
+        file_extension: Optional[List[str]] = None,
+        file_types: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None
+    ) -> dict:
+        """Browse the workspace using a single unified interface.
 
         Args:
             token: Authentication token (optional - will use default if not provided)
-            paths: Optional list of paths to list (relative to user's home directory). If empty or None, lists user home directory.
-            file_type: Optional file type(s) to filter by. Can be a string or list of strings
-                      (e.g., 'contigs', 'folder', 'unspecified', 'genome_group', 'feature_group', 'reads'). 
-                      If provided, only files/objects with these types will be returned. This filters by the workspace object type,
-                      not by file extension, so it can match files with different extensions that share the same type.
-
-        Returns:
-            String representation of workspace contents.
+            path: Path to inspect/search. IMPORTANT PATH FORMAT:
+                - Absolute paths MUST start with /{user_id}/home (e.g., /user1@patricbrc.org/home or /user1@patricbrc.org/home/subfolder)
+                - Relative paths (e.g., "subfolder") are resolved relative to /{user_id}/home
+                - DO NOT include /workspace prefix - paths should be /{user_id}/home or relative paths
+                - If path is not provided or empty, defaults to user's home directory
+                - Examples: "/user1@patricbrc.org/home", "subfolder", "/user1@patricbrc.org/home/Genome Groups"
+            search: If True, perform recursive search. If False, inspect path and return either folder contents or metadata.
+            filename_search_terms: Words/terms that must appear IN the filename itself (AND logic). 
+                                   Use this ONLY to filter by text within the actual filename.
+            file_extension: File extensions to match (OR logic). Example: ["fastq", "fq"] finds .fastq OR .fq files.
+            file_types: Workspace object types to match (OR logic). Valid types include: "reads", "contigs", "genome_group", 
+                       "feature_group", "folder", "unspecified". Example: ["reads", "contigs"] finds reads OR contigs objects.
+                       Note: This is the BVBRC workspace metadata type, NOT filename text or extensions.
+            sort_by: Optional sort field. Valid options: creation_time, name, size, type.
+            sort_order: Optional sort direction. Valid options: asc, desc.
         """
-        # Get the appropriate token (automatically checks Authorization header in HTTP mode)
         auth_token = token_provider.get_token(token)
         if not auth_token:
             return {
@@ -125,63 +140,27 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
                 "source": "bvbrc-workspace"
             }
 
-        # Extract user_id from token for path resolution
         user_id = extract_userid_from_token(auth_token)
-        paths = resolve_relative_paths(paths or [], user_id)
-        print(f"WORKSPACE_LS_TOOL paths: {paths}", file=sys.stderr)
+        resolved_path = resolve_relative_path(path, user_id)
 
-        print(f"Listing paths: {paths}, user_id: {user_id}, file_type: {file_types}", file=sys.stderr)
-        result = await workspace_ls(api, paths, auth_token, file_types )
-        print(f"Listing result: {result}", file=sys.stderr)
-        return result
-
-    @mcp.tool()
-    async def workspace_search_tool(token: Optional[str] = None, search_term: Optional[str] = None, paths: List[str] = None, file_extension: Optional[str] = None, file_types: Optional[str | List[str]] = None) -> dict:
-        """Search the workspace for a given term and/or file extension.
-
-        Args:
-            token: Authentication token (optional - will use default if not provided)
-            search_term: Optional term to search the workspace for in file names.
-            paths: Optional list of paths to search (relative to user's home directory). If empty or None, searches user home directory.
-            file_extension: Optional file extension to filter by (e.g., 'py', 'txt', 'json'). Can include or exclude the leading dot.
-            file_types: Optional file type(s) to filter by. Can be a string or list of strings
-                       (e.g., 'contigs', 'folder', 'unspecified', 'genome_group', 'feature_group', 'reads').
-                       If provided, only files/objects with these types will be returned. This filters by the workspace object type,
-                       not by file extension, so it can match files with different extensions that share the same type.
-                       At least one of search_term, file_extension, or file_types must be provided.
-
-        Note: Paths are relative to the user's home directory. If no paths are provided, the search will be performed in the user's home directory.
-        """
-        if not search_term and not file_extension and not file_types:
-            return {
-                "error": "at least one of search_term, file_extension, or file_types parameter is required",
-                "errorType": "INVALID_PARAMETERS",
-                "source": "bvbrc-workspace"
-            }
-
-        if not search_term:
-            search_term = None
-
-        if not file_extension:
-            file_extension = None
-
-        # Get the appropriate token (automatically checks Authorization header in HTTP mode)
-        auth_token = token_provider.get_token(token)
-        if not auth_token:
-            return {
-                "error": "No authentication token available",
-                "errorType": "AUTHENTICATION_ERROR",
-                "source": "bvbrc-workspace"
-            }
-
-        # Extract user_id from token for path resolution
-        user_id = extract_userid_from_token(auth_token)
-        paths = resolve_relative_paths(paths or [], user_id)
-
-        print(f"Searching in paths: {paths}, user_id: {user_id}, term: {search_term}, extension: {file_extension}, file_types: {file_types}", file=sys.stderr)
-        result = await workspace_search(api, paths, search_term, file_extension, file_types, auth_token)
-        print(f"Search result: {result}", file=sys.stderr)
-        return result
+        print(
+            f"Browsing workspace path: {resolved_path}, user_id: {user_id}, "
+            f"search: {search}, filename_search_terms: {filename_search_terms}, extension: {file_extension}, "
+            f"file_types: {file_types}, sort_by: {sort_by}, sort_order: {sort_order}",
+            file=sys.stderr
+        )
+        return await workspace_browse(
+            api=api,
+            token=auth_token,
+            path=resolved_path,
+            search=search,
+            filename_search_terms=filename_search_terms,
+            file_extension=file_extension,
+            file_types=file_types,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            tool_name="workspace_browse_tool"
+        )
 
     @mcp.tool()
     async def workspace_get_file_metadata_tool(token: Optional[str] = None, path: str = None) -> dict:
