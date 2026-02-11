@@ -23,6 +23,7 @@ from functions.data_functions import (
     get_collection_fields,
     validate_filter_fields,
     create_query_plan_internal,
+    get_feature_sequence_by_id,
     CURSOR_BATCH_SIZE
 )
 from common.llm_client import create_llm_client_from_config
@@ -490,5 +491,82 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             return {
                 "error": f"Query planning failed: {str(e)}",
                 "errorType": "PLANNING_FAILED",
+                "source": "bvbrc-mcp-data"
+            }
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def bvbrc_get_feature_sequence_by_id(patric_ids: List[str], 
+                                              type: str,
+                                              token: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get the nucleotide or amino acid sequences for genomic features by their PATRIC IDs.
+        
+        This tool performs a two-step batch query for efficient retrieval of multiple sequences:
+        1. Queries genome_feature collection to get the sequence MD5 hashes for all IDs
+        2. Queries feature_sequence collection with those MD5s to retrieve the actual sequences
+        
+        Args:
+            patric_ids: List of PATRIC feature IDs (e.g., ["fig|91750.131.peg.1283", "fig|91750.131.peg.1284"])
+                       Can be a single ID in a list or multiple IDs for batch retrieval
+            type: Type of sequence to retrieve - "na" for nucleotide or "aa" for amino acid
+            token: Authentication token (optional, auto-detected if token_provider is configured)
+            
+        Returns:
+            Dict with either:
+            - Success: {
+                "results": [                      # Array of sequence results
+                  {
+                    "patric_id": <str>,          # PATRIC feature ID
+                    "sequence": <str>,           # The actual DNA/RNA or protein sequence
+                    "md5": <str>,                # MD5 hash of the sequence
+                    "sequence_type": <str>,      # "na" or "aa"
+                    "length": <int>              # Length of sequence
+                  },
+                  ...
+                ],
+                "count": <int>,                  # Number of sequences successfully retrieved
+                "requested": <int>,              # Number of IDs requested
+                "not_found": [<str>, ...],       # Optional: IDs that weren't found
+                "warnings": [<str>, ...],        # Optional: Warning messages
+                "source": "bvbrc-mcp-data"
+              }
+            - Error: {
+                "error": <error_message>,
+                "source": "bvbrc-mcp-data"
+              }
+        
+        Example:
+            # Get nucleotide sequence for a single feature
+            result = bvbrc_get_feature_sequence_by_id(["fig|91750.131.peg.1283"], "na")
+            
+            # Get amino acid sequences for multiple features (batch query)
+            result = bvbrc_get_feature_sequence_by_id([
+                "fig|91750.131.peg.1283",
+                "fig|91750.131.peg.1284",
+                "fig|91750.131.peg.1285"
+            ], "aa")
+        """
+        print(f"Getting {type.upper()} sequence(s) for {len(patric_ids)} feature(s)")
+        
+        # Authentication headers
+        headers: Optional[Dict[str, str]] = None
+        if _token_provider:
+            auth_token = _token_provider.get_token(token)
+            if auth_token:
+                headers = {"Authorization": auth_token}
+        elif token:
+            headers = {"Authorization": token}
+        
+        try:
+            result = await get_feature_sequence_by_id(
+                patric_ids=patric_ids,
+                sequence_type=type,
+                base_url=_base_url,
+                headers=headers
+            )
+            return result
+        except Exception as e:
+            return {
+                "error": f"Error retrieving sequence: {str(e)}",
                 "source": "bvbrc-mcp-data"
             }

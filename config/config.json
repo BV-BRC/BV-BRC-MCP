@@ -26,7 +26,7 @@
         "timeout": 120
     },
     "workflow_engine": {
-        "api_url": "http://localhost:8000/api/v1",
+        "api_url": "http://140.221.78.67:12007/api/v1",
         "timeout": 30,
         "enabled": true
     },

@@ -758,3 +758,215 @@ def list_solr_collections() -> str:
         32. **subsystem_ref** - Reference of names and classifications of subsystems used to group commonly-associated functional roles.
         33. **sequence_feature_vt** - Sequence feature variant type data."""
 
+
+async def get_feature_sequence_by_id(
+    patric_ids: List[str],
+    sequence_type: str,
+    base_url: str = None,
+    headers: Dict[str, str] = None
+) -> Dict[str, Any]:
+    """
+    Get the nucleotide or amino acid sequences for features by their PATRIC IDs.
+    
+    This function performs a two-step batch query:
+    1. Query genome_feature collection to get the aa_sequence_md5 or na_sequence_md5 for all IDs
+    2. Query feature_sequence collection with those md5s to get the actual sequences
+    
+    Args:
+        patric_ids: List of PATRIC IDs (e.g., ["fig|91750.131.peg.1283", "fig|91750.131.peg.1284"])
+        sequence_type: Type of sequence - "na" for nucleotide or "aa" for amino acid
+        base_url: Optional base URL override
+        headers: Optional headers override
+        
+    Returns:
+        Dict with either:
+        - Success: {
+            "results": [
+              {"sequence": <str>, "md5": <str>, "sequence_type": <str>, "patric_id": <str>, "length": <int>},
+              ...
+            ],
+            "count": <int>,
+            "requested": <int>,
+            "source": "bvbrc-mcp-data"
+          }
+        - Error: {"error": <error_message>, "source": "bvbrc-mcp-data"}
+    """
+    # Validate sequence_type parameter
+    sequence_type = sequence_type.lower()
+    if sequence_type not in ["na", "aa"]:
+        return {
+            "error": f"Invalid sequence_type: {sequence_type}. Must be 'na' or 'aa'.",
+            "source": "bvbrc-mcp-data"
+        }
+    
+    if not patric_ids or not isinstance(patric_ids, list):
+        return {
+            "error": "patric_ids must be a non-empty list",
+            "source": "bvbrc-mcp-data"
+        }
+    
+    # Remove duplicates and empty strings
+    patric_ids = [pid for pid in patric_ids if pid and str(pid).strip()]
+    patric_ids = list(dict.fromkeys(patric_ids))  # Remove duplicates while preserving order
+    
+    if not patric_ids:
+        return {
+            "error": "patric_ids list is empty after filtering",
+            "source": "bvbrc-mcp-data"
+        }
+    
+    md5_field = "aa_sequence_md5" if sequence_type == "aa" else "na_sequence_md5"
+    
+    print(f"Step 1: Querying genome_feature for {len(patric_ids)} patric_id(s) to get {md5_field}")
+    
+    # Step 1: Query genome_feature to get the md5 hashes for all IDs
+    try:
+        # Build filter using structured filters for the "in" operator
+        filters = {
+            "logic": "and",
+            "filters": [
+                {"field": "patric_id", "op": "in", "value": patric_ids}
+            ]
+        }
+        
+        filter_str = build_filter(filters)
+        # Add the patric_id:* constraint for genome_feature collection
+        filter_str = f"({filter_str}) AND patric_id:*"
+        
+        feature_result = await query_direct(
+            core="genome_feature",
+            filter_str=filter_str,
+            options={"select": [md5_field, "patric_id"]},
+            base_url=base_url,
+            headers=headers,
+            batch_size=min(len(patric_ids) * 2, 10000)  # Reasonable batch size
+        )
+        
+        feature_results = feature_result.get("results", [])
+        if not feature_results:
+            return {
+                "error": f"No features found with the provided patric_ids",
+                "requested_ids": patric_ids,
+                "source": "bvbrc-mcp-data"
+            }
+        
+        print(f"Step 1: Found {len(feature_results)} feature(s)")
+        
+        # Build mapping of md5 -> patric_id(s) and collect all md5 hashes
+        md5_to_patric_ids: Dict[str, List[str]] = {}
+        patric_id_to_md5: Dict[str, str] = {}
+        missing_md5_ids: List[str] = []
+        
+        for feature in feature_results:
+            pid = feature.get("patric_id")
+            md5_hash = feature.get(md5_field)
+            
+            if md5_hash:
+                patric_id_to_md5[pid] = md5_hash
+                if md5_hash not in md5_to_patric_ids:
+                    md5_to_patric_ids[md5_hash] = []
+                md5_to_patric_ids[md5_hash].append(pid)
+            else:
+                missing_md5_ids.append(pid)
+        
+        if not patric_id_to_md5:
+            return {
+                "error": f"None of the features have {md5_field} values",
+                "hint": f"These features may not have {sequence_type.upper()} sequence data available",
+                "requested_ids": patric_ids,
+                "found_ids": [f.get("patric_id") for f in feature_results],
+                "source": "bvbrc-mcp-data"
+            }
+        
+        unique_md5s = list(md5_to_patric_ids.keys())
+        print(f"Step 2: Found {len(unique_md5s)} unique MD5 hash(es), querying feature_sequence collection")
+        
+        # Step 2: Query feature_sequence with all the md5 hashes
+        sequence_filters = {
+            "field": "md5",
+            "op": "in",
+            "value": unique_md5s
+        }
+        
+        sequence_filter_str = build_filter(sequence_filters)
+        
+        sequence_result = await query_direct(
+            core="feature_sequence",
+            filter_str=sequence_filter_str,
+            options={"select": ["sequence", "md5", "sequence_type"]},
+            base_url=base_url,
+            headers=headers,
+            batch_size=min(len(unique_md5s) * 2, 10000)
+        )
+        
+        sequence_results = sequence_result.get("results", [])
+        if not sequence_results:
+            return {
+                "error": f"No sequences found for the MD5 hashes",
+                "hint": "The sequences may not be available in the feature_sequence collection",
+                "md5_hashes": unique_md5s,
+                "source": "bvbrc-mcp-data"
+            }
+        
+        print(f"Step 2: Found {len(sequence_results)} sequence(s)")
+        
+        # Build mapping of md5 -> sequence
+        md5_to_sequence: Dict[str, str] = {}
+        for seq_data in sequence_results:
+            md5 = seq_data.get("md5")
+            sequence = seq_data.get("sequence", "")
+            if md5:
+                md5_to_sequence[md5] = sequence
+        
+        # Build final results list
+        results_list: List[Dict[str, Any]] = []
+        found_ids: Set[str] = set()
+        
+        for pid in patric_ids:
+            if pid in patric_id_to_md5:
+                md5 = patric_id_to_md5[pid]
+                if md5 in md5_to_sequence:
+                    sequence = md5_to_sequence[md5]
+                    results_list.append({
+                        "patric_id": pid,
+                        "sequence": sequence,
+                        "md5": md5,
+                        "sequence_type": sequence_type,
+                        "length": len(sequence)
+                    })
+                    found_ids.add(pid)
+        
+        # Collect IDs that weren't found or didn't have sequences
+        not_found = [pid for pid in patric_ids if pid not in found_ids]
+        
+        print(f"Successfully retrieved {len(results_list)} {sequence_type.upper()} sequence(s)")
+        
+        result = {
+            "results": results_list,
+            "count": len(results_list),
+            "requested": len(patric_ids),
+            "source": "bvbrc-mcp-data"
+        }
+        
+        if not_found:
+            result["not_found"] = not_found
+            result["warnings"] = [
+                f"{len(not_found)} patric_id(s) not found or missing sequence data"
+            ]
+        
+        if missing_md5_ids:
+            if "warnings" not in result:
+                result["warnings"] = []
+            result["warnings"].append(
+                f"{len(missing_md5_ids)} feature(s) have no {md5_field} value"
+            )
+            result["missing_md5_ids"] = missing_md5_ids
+        
+        return result
+        
+    except Exception as e:
+        return {
+            "error": f"Error retrieving sequences: {str(e)}",
+            "source": "bvbrc-mcp-data"
+        }
+

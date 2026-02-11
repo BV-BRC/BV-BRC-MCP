@@ -746,11 +746,22 @@ async def create_and_execute_workflow_internal(
             
             print(f"Stage 3: Workflow submitted successfully: {result.get('workflow_id')}", file=sys.stderr)
             
+            # Update the workflow_json with the real workflow_id from the engine
+            # This ensures the returned workflow_json has the actual ID, not the placeholder
+            updated_workflow_json = workflow_json.copy()
+            updated_workflow_json['workflow_id'] = result.get('workflow_id')
+            
+            # Also update status and timestamps if available
+            updated_workflow_json['status'] = result.get('status', 'pending')
+            updated_workflow_json['submitted_at'] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            
+            print(f"Updated workflow_json with real workflow_id: {result.get('workflow_id')}", file=sys.stderr)
+            
             # Return success response
             return {
                 "workflow_id": result.get('workflow_id'),
                 "status": result.get('status', 'pending'),
-                "workflow_json": workflow_json,
+                "workflow_json": updated_workflow_json,
                 "submitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "message": result.get('message', 'Workflow created and submitted for execution'),
                 "status_url": f"{engine_url}/workflows/{result.get('workflow_id')}/status",
