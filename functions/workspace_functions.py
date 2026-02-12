@@ -14,7 +14,8 @@ async def workspace_ls(
     token: str,
     file_types: List[str] = None,
     sort_by: str = None,
-    sort_order: str = None
+    sort_order: str = None,
+    limit: int = None
 ) -> dict:
     """
     List the contents of a specific workspace directory using the JSON-RPC API.
@@ -28,6 +29,7 @@ async def workspace_ls(
                     If provided, only files/objects with these types will be returned.
         sort_by: Optional sort field. Valid options: creation_time, name, size, type.
         sort_order: Optional sort direction. Valid options: asc, desc.
+        limit: Optional maximum number of results to return (server-side limiting).
     Returns:
         List of workspace items
     """
@@ -62,6 +64,8 @@ async def workspace_ls(
             api_params["sort_by"] = sort_by
         if sort_order:
             api_params["sort_order"] = sort_order
+        if limit is not None:
+            api_params["limit"] = limit
 
         # Only include file_types_list in print if it was defined
         print_msg = f"workspace_ls file_types: {file_types}, Query params: {json.dumps(api_params, indent=2)}"
@@ -93,7 +97,8 @@ async def workspace_search(
     file_types: List[str] = None,
     token: str = None,
     sort_by: str = None,
-    sort_order: str = None
+    sort_order: str = None,
+    limit: int = None
 ) -> dict:
     """
     Search the entire workspace for a given term and/or file extension and/or file type.
@@ -111,6 +116,7 @@ async def workspace_search(
         token: Authentication token for API calls
         sort_by: Optional sort field. Valid options: creation_time, name, size, type.
         sort_order: Optional sort direction. Valid options: asc, desc.
+        limit: Optional maximum number of results to return (server-side limiting).
     Returns:
         List of matching workspace items
     """
@@ -270,6 +276,8 @@ async def workspace_search(
             api_params["sort_by"] = sort_by
         if sort_order:
             api_params["sort_order"] = sort_order
+        if limit is not None:
+            api_params["limit"] = limit
 
         result = await api.acall("Workspace.ls", api_params, 1, token)
         
@@ -299,6 +307,7 @@ async def workspace_browse(
     file_types: List[str] = None,
     sort_by: str = None,
     sort_order: str = None,
+    num_results: int = 50,
     tool_name: str = "workspace_browse_tool"
 ) -> dict:
     """
@@ -318,6 +327,7 @@ async def workspace_browse(
         file_types: Optional list of workspace type filters (used in search and folder listing modes).
         sort_by: Optional sort field. Valid options: creation_time, name, size, type.
         sort_order: Optional sort direction. Valid options: asc, desc.
+        num_results: Maximum number of results to return. Defaults to 50.
         tool_name: Name of the calling tool (for response envelope).
 
     Returns a consistent response envelope with all data nested under "result":
@@ -358,12 +368,14 @@ async def workspace_browse(
             file_types=file_types,
             token=token,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            limit=num_results  # Pass limit to server-side
         )
         if "error" in search_result:
             return search_result
 
         items = search_result.get("items", [])
+        # Server-side limiting via limit parameter, no client-side slicing needed
         return {
             "result": {
                 "items": items,
@@ -397,12 +409,14 @@ async def workspace_browse(
             token=token,
             file_types=file_types,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            limit=num_results  # Pass limit to server-side
         )
         if "error" in list_result:
             return list_result
 
         items = list_result.get("items", [])
+        # Server-side limiting via limit parameter, no client-side slicing needed
         return {
             "result": {
                 "items": items,

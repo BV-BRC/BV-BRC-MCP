@@ -60,6 +60,10 @@ def resolve_relative_paths(paths: List[str], user_id: str) -> List[str]:
     resolved_paths = []
 
     for path in paths:
+        # Strip /workspace prefix if present (orchestrator may add this)
+        if path.startswith('/workspace/'):
+            path = path[len('/workspace'):]
+        
         # If path already starts with /, treat as absolute
         if path.startswith('/'):
             resolved_paths.append(path)
@@ -86,6 +90,10 @@ def resolve_relative_path(path: str, user_id: str) -> str:
     if not path or path == '/':
         return get_user_home_path(user_id)
 
+    # Strip /workspace prefix if present (orchestrator may add this)
+    if path.startswith('/workspace/'):
+        path = path[len('/workspace'):]
+
     home_path = get_user_home_path(user_id)
 
     # If path already starts with /, treat as absolute
@@ -110,7 +118,8 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         file_extension: Optional[List[str]] = None,
         file_types: Optional[List[str]] = None,
         sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None
+        sort_order: Optional[str] = None,
+        num_results: int = 50
     ) -> dict:
         """Browse the workspace using a single unified interface.
 
@@ -122,7 +131,20 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
                 - DO NOT include /workspace prefix - paths should be /{user_id}/home or relative paths
                 - If path is not provided or empty, defaults to user's home directory
                 - Examples: "/user1@patricbrc.org/home", "subfolder", "/user1@patricbrc.org/home/Genome Groups"
-            search: If True, perform recursive search. If False, inspect path and return either folder contents or metadata.
+            search: CRITICAL - Controls search behavior:
+                - search=True: RECURSIVE search through all subdirectories. Use this when:
+                    * Finding files across the entire workspace (e.g., "find all fastq files", "10 most recent files")
+                    * Searching by filename, extension, or type across multiple folders
+                    * You need to look beyond just the direct contents of one folder
+                - search=False: NON-RECURSIVE inspection of a single path. Use this when:
+                    * Listing direct contents of a specific folder only (one level)
+                    * Getting metadata of a single file or folder
+                    * You only want to see what's immediately in the target directory
+                EXAMPLES:
+                    * "Find all fastq files in my workspace" → search=True
+                    * "Show me the 10 most recent files" → search=True
+                    * "List contents of my home directory" → search=False
+                    * "What's in the Genome Groups folder?" → search=False
             filename_search_terms: Words/terms that must appear IN the filename itself (AND logic). 
                                    Use this ONLY to filter by text within the actual filename.
             file_extension: File extensions to match (OR logic). Example: ["fastq", "fq"] finds .fastq OR .fq files.
@@ -131,6 +153,7 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
                        Note: This is the BVBRC workspace metadata type, NOT filename text or extensions.
             sort_by: Optional sort field. Valid options: creation_time, name, size, type.
             sort_order: Optional sort direction. Valid options: asc, desc.
+            num_results: Maximum number of results to return. Defaults to 50.
         """
         auth_token = token_provider.get_token(token)
         if not auth_token:
@@ -146,7 +169,7 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         print(
             f"Browsing workspace path: {resolved_path}, user_id: {user_id}, "
             f"search: {search}, filename_search_terms: {filename_search_terms}, extension: {file_extension}, "
-            f"file_types: {file_types}, sort_by: {sort_by}, sort_order: {sort_order}",
+            f"file_types: {file_types}, sort_by: {sort_by}, sort_order: {sort_order}, num_results: {num_results}",
             file=sys.stderr
         )
         return await workspace_browse(
@@ -159,6 +182,7 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
             file_types=file_types,
             sort_by=sort_by,
             sort_order=sort_order,
+            num_results=num_results,
             tool_name="workspace_browse_tool"
         )
 
