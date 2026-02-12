@@ -33,6 +33,37 @@ def load_prompt_file(filename: str) -> str:
         return f.read()
 
 
+def convert_friendly_names_to_api_names(workflow_manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert friendly service names to API names in workflow steps.
+    
+    This ensures that the 'app' field in each step uses the API name
+    instead of the friendly name, which is required by the workflow engine.
+    
+    Args:
+        workflow_manifest: The workflow manifest dictionary
+        
+    Returns:
+        The workflow manifest with API names in step 'app' fields
+    """
+    # Load service mapping
+    service_mapping = load_config_file('service_mapping.json')
+    friendly_to_api = service_mapping.get('friendly_to_api', {})
+    
+    # Convert app names in steps
+    if 'steps' in workflow_manifest and isinstance(workflow_manifest['steps'], list):
+        for step in workflow_manifest['steps']:
+            if isinstance(step, dict) and 'app' in step:
+                app_name = step['app']
+                # Convert friendly name to API name if it exists in the mapping
+                if app_name in friendly_to_api:
+                    api_name = friendly_to_api[app_name]
+                    print(f"Converting step app name from '{app_name}' to '{api_name}'", file=sys.stderr)
+                    step['app'] = api_name
+    
+    return workflow_manifest
+
+
 def clear_service_catalog():
     """
     Clear the service catalog.
@@ -413,6 +444,9 @@ PREVIOUS WORKFLOW (fix only what is needed to address validation errors):
         
         # Parse JSON
         workflow_manifest = json.loads(response_text)
+        
+        # Convert friendly names to API names in workflow steps
+        workflow_manifest = convert_friendly_names_to_api_names(workflow_manifest)
         
         # Update workspace_output_folder with actual user_id
         if 'base_context' in workflow_manifest:
