@@ -1,7 +1,7 @@
 {
   "apps": [
     {
-      "name": "bvbrc-mcp-server",
+      "name": "bvbrc-mcp-server-dev",
       "script": "/home/ac.cucinell/bvbrc-dev/Copilot/BVBRC-MCP-Servers/bvbrc-mcp-server/start_http_server.sh",
       "interpreter": "/bin/bash",
       "exec_mode": "fork",
