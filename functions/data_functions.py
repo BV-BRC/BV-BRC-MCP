@@ -12,7 +12,7 @@ import time
 import asyncio
 from typing import Any, Dict, List, Tuple, Optional, Set
 from bvbrc_solr_api import create_client, query
-from bvbrc_solr_api.core.solr_http_client import select as solr_select
+from bvbrc_solr_api.core.solr_http_client import async_select as solr_select
 from common.llm_client import LLMClient
 
 # Configuration constants
@@ -139,7 +139,11 @@ async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] 
     # Use provided batch_size or fall back to default constant
     rows_per_page = batch_size if batch_size is not None else CURSOR_BATCH_SIZE
     
-    # Execute single-page query with auto-cleanup
+    print(f"[query_direct] Query params: core='{core}', filter_str='{filter_str}', rows={rows_per_page}, cursorId={cursorId or '*'}, countOnly={countOnly}")
+    if options:
+        print(f"[query_direct] Options: {options}")
+    
+    # Execute single-page query with strict async client lifecycle.
     async with create_client(context_overrides) as client:
         # Prepare a configured CursorPager via the client
         pager = getattr(client, core).stream_all_solr(
@@ -162,6 +166,13 @@ async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] 
                     params["rows"] = pager.rows
                     params["sort"] = pager.sort
                     params["cursorMark"] = cursor_mark
+                    
+                    solr_url = f"{pager.base_url}/{pager.collection}/"
+                    print(f"[query_direct] Solr HTTP request: POST {solr_url}")
+                    print(f"[query_direct] Solr params: {params}")
+                    if pager.headers:
+                        print(f"[query_direct] Solr headers: {list(pager.headers.keys())}")
+                    
                     result = await solr_select(
                         pager.collection,
                         params,
@@ -171,19 +182,22 @@ async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] 
                         auth=pager.auth,
                         timeout=pager.timeout,
                     )
-
+                    
                     response = result.get("response", {})
                     docs: List[Dict[str, Any]] = response.get("docs", [])
                     next_cursor = result.get("nextCursorMark")
                     num_found = response.get("numFound")
+                    print(f"[query_direct] Solr response: numFound={num_found}, docs_returned={len(docs)}, nextCursorMark={next_cursor}")
                     return docs, next_cursor, num_found
                     
                 except Exception as e:
                     last_exception = e
                     if attempt < MAX_RETRIES - 1:
                         wait_time = RETRY_BACKOFF_BASE * (2 ** attempt)
+                        print(f"[query_direct] Solr request failed (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}, retrying in {wait_time}s...")
                         await asyncio.sleep(wait_time)
                     else:
+                        print(f"[query_direct] Solr request failed after {MAX_RETRIES} attempts: {str(e)}")
                         raise last_exception
             
             if last_exception:
