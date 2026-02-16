@@ -240,6 +240,7 @@ async def list_jobs(
             simple_filter["include_archived"] = 1
 
         sort_field_map = {
+            "creation_time": "submit_time",
             "submit_time": "submit_time",
             "start_time": "start_time",
             "completed_time": "finish_time",
