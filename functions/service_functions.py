@@ -30,6 +30,34 @@ def _resolve_output_path(output_path: str, user_id: str) -> str:
         output_path = f"/{user_id}/{output_path}"
     return output_path
 
+def _build_grid_payload(
+    entity_type: str,
+    items: list,
+    source: str = "bvbrc-service",
+    result_type: str = "list_result",
+    pagination: Dict[str, Any] = None,
+    sort: Dict[str, Any] = None,
+    columns: List[Dict[str, Any]] = None,
+    selectable: bool = True,
+    multi_select: bool = True,
+    sortable: bool = True
+) -> Dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "entity_type": entity_type,
+        "source": source,
+        "result_type": result_type,
+        "capabilities": {
+            "selectable": selectable,
+            "multi_select": multi_select,
+            "sortable": sortable
+        },
+        "pagination": pagination,
+        "sort": sort,
+        "columns": columns or [],
+        "items": items if isinstance(items, list) else []
+    }
+
 def get_service_info(service_name: str) -> str:
     """
     Get service information from prompt files.
@@ -282,7 +310,33 @@ async def list_jobs(
             "status": status,
             "sort_by": sort_by,
             "sort_dir": sort_dir,
-            "source": "bvbrc-service"
+            "source": "bvbrc-service",
+            "ui_grid": _build_grid_payload(
+                entity_type="job",
+                items=jobs,
+                source="bvbrc-service",
+                result_type="list_result",
+                pagination={
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": (offset + len(jobs)) < total
+                },
+                sort={
+                    "sort_by": sort_by,
+                    "sort_dir": sort_dir
+                },
+                columns=[
+                    {"key": "status", "label": "Status", "sortable": True},
+                    {"key": "id", "label": "Job ID", "sortable": True},
+                    {"key": "application_name", "label": "Service", "sortable": True},
+                    {"key": "submit_time", "label": "Submit", "sortable": True},
+                    {"key": "completed_time", "label": "Completed", "sortable": True}
+                ],
+                selectable=True,
+                multi_select=True,
+                sortable=True
+            )
         }
     except Exception as e:
         print(f"Error in list_jobs: {e}", file=sys.stderr)

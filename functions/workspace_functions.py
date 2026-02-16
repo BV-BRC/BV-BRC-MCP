@@ -8,6 +8,34 @@ import json
 import sys
 import base64
 
+def _build_grid_payload(
+    entity_type: str,
+    items: list = None,
+    result_type: str = "list_result",
+    pagination: dict = None,
+    sort: dict = None,
+    source: str = "bvbrc-workspace",
+    columns: list = None,
+    selectable: bool = True,
+    multi_select: bool = True,
+    sortable: bool = True
+) -> dict:
+    return {
+        "schema_version": "1.0",
+        "entity_type": entity_type,
+        "source": source,
+        "result_type": result_type,
+        "capabilities": {
+            "selectable": selectable,
+            "multi_select": multi_select,
+            "sortable": sortable
+        },
+        "pagination": pagination,
+        "sort": sort,
+        "columns": columns or [],
+        "items": items or []
+    }
+
 async def workspace_ls(
     api: JsonRpcCaller,
     paths: List[str],
@@ -73,14 +101,31 @@ async def workspace_ls(
             print_msg = f"workspace_ls file_types: {file_types}, file_types_list: {file_types_list}, Query params: {json.dumps(api_params, indent=2)}"
         print(print_msg, file=sys.stderr)
         result = await api.acall("Workspace.ls", api_params, 1, token)
-        
+
         # Standardize response structure
         result_list = result if isinstance(result, list) else [result]
         return {
             "items": result_list,
             "count": len(result_list),
             "path": paths[0] if paths else "/",
-            "source": "bvbrc-workspace"
+            "source": "bvbrc-workspace",
+            "ui_grid": _build_grid_payload(
+                entity_type="workspace_item",
+                items=result_list,
+                result_type="list_result",
+                source="bvbrc-workspace",
+                sort={"sort_by": sort_by, "sort_order": sort_order},
+                pagination={"limit": limit, "offset": 0, "has_more": None},
+                columns=[
+                    {"key": "name", "label": "Name", "sortable": True},
+                    {"key": "type", "label": "Type", "sortable": True},
+                    {"key": "creation_time", "label": "Created", "sortable": True},
+                    {"key": "size", "label": "Size", "sortable": True}
+                ],
+                selectable=True,
+                multi_select=True,
+                sortable=True
+            )
         }
     except Exception as e:
         return {
@@ -186,7 +231,7 @@ async def workspace_search(
             # For extension patterns ending with $, we need special handling
             combined_pattern = ""
             end_patterns = []
-            
+
             for pattern in name_conditions:
                 if pattern.endswith("$"):
                     # Extension pattern - save for end (OR logic for multiple extensions)
@@ -194,7 +239,7 @@ async def workspace_search(
                 else:
                     # Search term - add as lookahead (AND logic for multiple terms)
                     combined_pattern += f"(?=.*{pattern})"
-            
+
             if end_patterns:
                 # Combine lookaheads with the end-anchored pattern(s)
                 if len(end_patterns) > 1:
@@ -207,7 +252,7 @@ async def workspace_search(
             else:
                 # No end anchor, just match anything after lookaheads
                 combined_pattern += ".*"
-            
+
             query_conditions = {
                 "name": {
                     "$regex": combined_pattern,
@@ -228,7 +273,7 @@ async def workspace_search(
             # Combine name conditions
             combined_pattern = ""
             end_patterns = []
-            
+
             for pattern in name_conditions:
                 if pattern.endswith("$"):
                     # Extension pattern - save for end (OR logic for multiple extensions)
@@ -236,7 +281,7 @@ async def workspace_search(
                 else:
                     # Search term - add as lookahead (AND logic for multiple terms)
                     combined_pattern += f"(?=.*{pattern})"
-            
+
             if end_patterns:
                 # Combine lookaheads with the end-anchored pattern(s)
                 if len(end_patterns) > 1:
@@ -249,9 +294,9 @@ async def workspace_search(
             else:
                 # No end anchor, just match anything after lookaheads
                 combined_pattern += ".*"
-            
+
             name_regex = combined_pattern
-        
+
         # Try combining name and type in a single dict (implicit AND in MongoDB)
         query_conditions = {
             "name": {
@@ -280,7 +325,7 @@ async def workspace_search(
             api_params["limit"] = limit
 
         result = await api.acall("Workspace.ls", api_params, 1, token)
-        
+
         # Standardize response structure
         result_list = result if isinstance(result, list) else [result]
         return {
@@ -288,7 +333,24 @@ async def workspace_search(
             "count": len(result_list),
             "filename_search_terms": filename_search_terms,
             "paths": paths,
-            "source": "bvbrc-workspace"
+            "source": "bvbrc-workspace",
+            "ui_grid": _build_grid_payload(
+                entity_type="workspace_item",
+                items=result_list,
+                result_type="search_result",
+                source="bvbrc-workspace",
+                sort={"sort_by": sort_by, "sort_order": sort_order},
+                pagination={"limit": limit, "offset": 0, "has_more": None},
+                columns=[
+                    {"key": "name", "label": "Name", "sortable": True},
+                    {"key": "type", "label": "Type", "sortable": True},
+                    {"key": "creation_time", "label": "Created", "sortable": True},
+                    {"key": "size", "label": "Size", "sortable": True}
+                ],
+                selectable=True,
+                multi_select=True,
+                sortable=True
+            )
         }
     except Exception as e:
         return {
@@ -321,7 +383,7 @@ async def workspace_browse(
         token: Authentication token for API calls
         path: Path to inspect/search. Defaults to user home if not provided.
         search: If True, perform recursive search. If False, inspect path and return listing or metadata.
-        filename_search_terms: Optional list of terms to search within file/object names (used when search=True). 
+        filename_search_terms: Optional list of terms to search within file/object names (used when search=True).
                                All terms must appear in the filename (AND logic).
         file_extension: Optional list of extension filters (used when search=True). Multiple extensions use OR logic.
         file_types: Optional list of workspace type filters (used in search and folder listing modes).
@@ -383,7 +445,21 @@ async def workspace_browse(
                 "result_type": "search_result",
                 "count": len(items),
                 "path": path,
-                "source": "bvbrc-workspace"
+                "source": "bvbrc-workspace",
+                "ui_grid": _build_grid_payload(
+                    entity_type="workspace_item",
+                    items=items,
+                    result_type="search_result",
+                    source="bvbrc-workspace",
+                    sort={"sort_by": sort_by, "sort_order": sort_order},
+                    pagination={"limit": num_results, "offset": 0, "has_more": None},
+                    columns=[
+                        {"key": "name", "label": "Name", "sortable": True},
+                        {"key": "type", "label": "Type", "sortable": True},
+                        {"key": "creation_time", "label": "Created", "sortable": True},
+                        {"key": "size", "label": "Size", "sortable": True}
+                    ]
+                )
             }
         }
 
@@ -424,7 +500,21 @@ async def workspace_browse(
                 "result_type": "list_result",
                 "count": len(items),
                 "path": path,
-                "source": "bvbrc-workspace"
+                "source": "bvbrc-workspace",
+                "ui_grid": _build_grid_payload(
+                    entity_type="workspace_item",
+                    items=items,
+                    result_type="list_result",
+                    source="bvbrc-workspace",
+                    sort={"sort_by": sort_by, "sort_order": sort_order},
+                    pagination={"limit": num_results, "offset": 0, "has_more": None},
+                    columns=[
+                        {"key": "name", "label": "Name", "sortable": True},
+                        {"key": "type", "label": "Type", "sortable": True},
+                        {"key": "creation_time", "label": "Created", "sortable": True},
+                        {"key": "size", "label": "Size", "sortable": True}
+                    ]
+                )
             }
         }
 
@@ -434,14 +524,29 @@ async def workspace_browse(
             "tool_name": tool_name,
             "result_type": "metadata_result",
             "path": path,
-            "source": "bvbrc-workspace"
+            "source": "bvbrc-workspace",
+            "ui_grid": _build_grid_payload(
+                entity_type="workspace_metadata",
+                items=[metadata],
+                result_type="metadata_result",
+                source="bvbrc-workspace",
+                columns=[
+                    {"key": "name", "label": "Name", "sortable": False},
+                    {"key": "type", "label": "Type", "sortable": False},
+                    {"key": "creation_time", "label": "Created", "sortable": False},
+                    {"key": "size", "label": "Size", "sortable": False}
+                ],
+                selectable=False,
+                multi_select=False,
+                sortable=False
+            )
         }
     }
 
 async def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str) -> dict:
     """
     Get the metadata of a file from the workspace using the JSON-RPC API.
-    
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         path: Path to the file to get the metadata of
@@ -454,7 +559,7 @@ async def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str)
             "objects": [path],
             "metadata_only": True
         },1, token)
-        
+
         # Add source field to response
         if isinstance(result, dict):
             result["source"] = "bvbrc-workspace"
@@ -475,7 +580,7 @@ async def workspace_get_file_metadata(api: JsonRpcCaller, path: str, token: str)
 async def workspace_download_file(api: JsonRpcCaller, path: str, token: str, output_file: str = None, return_data: bool = False) -> dict:
     """
     Download a file from the workspace using the JSON-RPC API.
-    
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         path: Path to the file to download
@@ -492,24 +597,24 @@ async def workspace_download_file(api: JsonRpcCaller, path: str, token: str, out
     try:
         download_url_obj = await _get_download_url(api, path, token)
         download_url = download_url_obj[0][0]
-        
+
         headers = {
             "Authorization": token
         }
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(download_url, headers=headers)
             response.raise_for_status()
             content = response.content
 
             result_parts = []
-            
+
             # Write to file if output_file is provided
             if output_file:
                 with open(output_file, 'wb') as file:
                     file.write(content)
                 result_parts.append(f"File downloaded and saved to {output_file}")
-            
+
             # Return data if return_data is True, or if output_file is None (backward compatibility)
             if return_data or output_file is None:
                 # Try to decode as text first
@@ -520,7 +625,7 @@ async def workspace_download_file(api: JsonRpcCaller, path: str, token: str, out
                     # If it's binary, encode as base64
                     base64_content = base64.b64encode(content).decode('utf-8')
                     result_parts.append(f"<base64_encoded_data>{base64_content}</base64_encoded_data>")
-            
+
             # Return appropriate result
             if len(result_parts) == 1:
                 return {
@@ -550,7 +655,7 @@ async def workspace_preview_file(api: JsonRpcCaller, path: str, token: str) -> d
     """
     Preview a file from the workspace by downloading only the first portion using byte ranges.
     This function uses HTTP Range headers internally to download only a portion of the file.
-    
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         path: Path to the file to preview
@@ -561,23 +666,23 @@ async def workspace_preview_file(api: JsonRpcCaller, path: str, token: str) -> d
     # Internal byte range parameters - not exposed to user
     # Default to first 8KB (8192 bytes) for preview - kept below common file save thresholds
     PREVIEW_BYTE_RANGE = 8192
-    
+
     try:
         download_url_obj = await _get_download_url(api, path, token)
         download_url = download_url_obj[0][0]
-        
+
         headers = {
             "Authorization": token,
             "Range": f"bytes=0-{PREVIEW_BYTE_RANGE - 1}"
         }
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(download_url, headers=headers)
             # 206 Partial Content is expected for range requests, treat as success
             if response.status_code not in (200, 206):
                 response.raise_for_status()
             content = response.content
-            
+
             # Try to decode as text first
             try:
                 text_content = content.decode('utf-8')
@@ -606,7 +711,7 @@ async def workspace_preview_file(api: JsonRpcCaller, path: str, token: str) -> d
 async def _get_download_url(api: JsonRpcCaller, path: str, token: str) -> str:
     """
     Get the download URL of a file from the workspace using the JSON-RPC API.
-    
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         path: Path to the file to get the download URL of
@@ -639,7 +744,7 @@ def _get_user_id_from_token(token: str) -> str:
 async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = None, token: str = None) -> dict:
     """
     Create an upload URL for a file in the workspace using the JSON-RPC API.
-    
+
     Args:
         api: JsonRpcCaller instance configured with workspace URL and token
         filename: Name of the file to create upload URL for
@@ -649,7 +754,7 @@ async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = 
         String representation of the upload URL response with parsed metadata
     """
     try:
-        
+
         if not token:
             return {
                 "error": "Authentication token not provided",
@@ -675,12 +780,12 @@ async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = 
             create_upload_nodes=True,
             overwrite=None
         )
-        
+
         # Parse the result if successful
         if result and len(result) > 0 and len(result[0]) > 0:
             # Extract the metadata array from result[0][0]
             meta_list = result[0][0]
-            
+
             # Convert the array to a structured object
             meta_obj = {
                 "id": meta_list[4],
@@ -706,7 +811,7 @@ async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = 
                 "url": upload_url,
                 "source": "bvbrc-workspace"
             }
-            
+
             # Upload the file to the upload URL
             print(f"Uploading file to {upload_url}")
             upload_result = _upload_file_to_url(filename, upload_url, token)
@@ -717,7 +822,7 @@ async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = 
             else:
                 msg["upload_status"] = "failed"
                 msg["upload_error"] = upload_result.get("error", "Upload failed")
-            
+
             return msg
         else:
             return {
@@ -725,7 +830,7 @@ async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = 
                 "errorType": "API_ERROR",
                 "source": "bvbrc-workspace"
             }
-            
+
     except Exception as e:
         return {
             "error": f"Error creating upload URL: {str(e)}",
@@ -754,7 +859,7 @@ async def _workspace_create(api: JsonRpcCaller, objects: list, token: str, creat
 def _upload_file_to_url(filename: str, upload_url: str, token: str) -> dict:
     """
     Upload a file to the specified Shock API URL using binary data.
-    
+
     Args:
         filename: Path to the file to upload
         upload_url: The upload URL from workspace API
@@ -766,38 +871,38 @@ def _upload_file_to_url(filename: str, upload_url: str, token: str) -> dict:
         # Check if file exists
         if not os.path.exists(filename):
             return {"success": False, "error": f"File {filename} does not exist"}
-        
+
         # Read the file content
         with open(filename, 'rb') as file:
             file_content = file.read()
-        
+
         # Set up headers for the Shock API request
         headers = {
             'Authorization': 'OAuth ' + token
         }
-        
+
         # Prepare the file for multipart form data upload
         with open(filename, 'rb') as file:
             files = {
                 'upload': (os.path.basename(filename), file, 'application/octet-stream')
             }
-            
+
             # Make the POST request with multipart form data
             response = requests.put(upload_url, files=files, headers=headers, timeout=30)
-        
+
         if response.status_code == 200:
             return {
-                "success": True, 
+                "success": True,
                 "message": f"File {filename} uploaded successfully",
                 "status_code": response.status_code
             }
         else:
             return {
-                "success": False, 
+                "success": False,
                 "error": f"Upload failed with status code {response.status_code}: {response.text}",
                 "status_code": response.status_code
             }
-            
+
     except Exception as e:
         return {"success": False, "error": f"Upload failed: {str(e)}"}
 
@@ -817,7 +922,7 @@ async def workspace_create_genome_group(api: JsonRpcCaller, genome_group_path: s
         result = await api.acall("Workspace.create", [{
             "objects": [[genome_group_path, 'genome_group', {}, content]]
         }],1, token)
-        
+
         # Add source field to response
         if isinstance(result, dict):
             result["source"] = "bvbrc-workspace"
@@ -849,7 +954,7 @@ async def workspace_create_feature_group(api: JsonRpcCaller, feature_group_path:
         result = await api.acall("Workspace.create", {
             "objects": [[feature_group_path, 'feature_group', {}, content]]
         },1, token)
-        
+
         # Add source field to response
         return {
             "data": result[0][0],
