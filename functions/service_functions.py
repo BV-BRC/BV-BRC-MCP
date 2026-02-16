@@ -6,6 +6,63 @@ import json
 import os
 import sys
 
+CGA_INPUT_TYPES = {"reads", "contigs", "genbank"}
+CGA_RECIPES = {
+    "auto",
+    "unicycler",
+    "canu",
+    "spades",
+    "meta-spades",
+    "plasmid-spades",
+    "single-cell",
+    "flye",
+}
+CGA_DOMAINS = {"Bacteria", "Archaea", "Viruses", "auto"}
+CGA_CODES = {0, 1, 4, 11, 25}
+CGA_PLATFORMS = {"infer", "illumina", "pacbio", "pacbio_hifi", "nanopore"}
+
+CGA_FIELD_ALIASES = {
+    "tax_id": "taxonomy_id",
+    "taxon_id": "taxonomy_id",
+    "output_folder": "output_path",
+    "output_name": "output_file",
+    "srr_accession": "srr_ids",
+    "srr_accessions": "srr_ids",
+    "organism_name": "scientific_name",
+    "scientificName": "scientific_name",
+}
+CGA_INPUT_TYPE_ALIASES = {
+    "read": "reads",
+    "raw_reads": "reads",
+    "fastq": "reads",
+    "contig": "contigs",
+    "assembled_contigs": "contigs",
+    "gbk": "genbank",
+    "genbank_file": "genbank",
+}
+CGA_RECIPE_ALIASES = {
+    "meta_flye": "flye",
+    "meta-flye": "flye",
+    "metaflye": "flye",
+    "single_cell": "single-cell",
+    "meta_spades": "meta-spades",
+    "plasmid_spades": "plasmid-spades",
+}
+CGA_DOMAIN_ALIASES = {
+    "bacteria": "Bacteria",
+    "bacterial": "Bacteria",
+    "archaea": "Archaea",
+    "archaeal": "Archaea",
+    "virus": "Viruses",
+    "viruses": "Viruses",
+    "viral": "Viruses",
+    "auto": "auto",
+}
+CGA_PLATFORM_ALIASES = {
+    "pacbio-hifi": "pacbio_hifi",
+    "hifi": "pacbio_hifi",
+}
+
 def _generate_numerical_uuid() -> int:
     """Generate a numerical UUID for JSON RPC call IDs."""
     return int(str(uuid.uuid4().int)[:10])  # Take first 10 digits to ensure it fits in int range
@@ -29,6 +86,140 @@ def _resolve_output_path(output_path: str, user_id: str) -> str:
     elif output_path and user_id and output_path.startswith('home/'):
         output_path = f"/{user_id}/{output_path}"
     return output_path
+
+
+def _normalize_and_validate_comprehensive_genome_analysis_params(
+    params: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Normalize CGA aliases and reject ambiguous/invalid values early."""
+    normalized = dict(params)
+
+    for alias_key, canonical_key in CGA_FIELD_ALIASES.items():
+        if alias_key in normalized and canonical_key not in normalized:
+            normalized[canonical_key] = normalized.pop(alias_key)
+
+    if "coverage" in normalized and "target_depth" not in normalized:
+        normalized["target_depth"] = normalized["coverage"]
+    normalized.pop("coverage", None)
+
+    if "expected_genome_size" in normalized and "genome_size" not in normalized:
+        units = str(normalized.get("genome_size_units", "M")).strip().upper()
+        unit_multipliers = {"K": 1000, "M": 1000000, "G": 1000000000}
+        try:
+            size_value = int(normalized["expected_genome_size"])
+            if units in unit_multipliers:
+                normalized["genome_size"] = size_value * unit_multipliers[units]
+        except (TypeError, ValueError):
+            pass
+    normalized.pop("expected_genome_size", None)
+    normalized.pop("genome_size_units", None)
+
+    sci_name = normalized.get("scientific_name")
+    if not isinstance(sci_name, str) or not sci_name.strip():
+        fallback_name = normalized.get("output_file")
+        if isinstance(fallback_name, str) and fallback_name.strip():
+            normalized["scientific_name"] = fallback_name.strip()
+        else:
+            raise ValueError(
+                "scientific_name must be a non-empty string (or output_file must be set to derive it)."
+            )
+
+    input_type = normalized.get("input_type")
+    if isinstance(input_type, str):
+        candidate = input_type.strip().lower()
+        normalized["input_type"] = CGA_INPUT_TYPE_ALIASES.get(candidate, candidate)
+    if normalized.get("input_type") not in CGA_INPUT_TYPES:
+        raise ValueError(
+            f"input_type must be one of {sorted(CGA_INPUT_TYPES)}; got {normalized.get('input_type')!r}."
+        )
+
+    recipe = normalized.get("recipe")
+    if isinstance(recipe, str):
+        candidate = recipe.strip().lower()
+        normalized["recipe"] = CGA_RECIPE_ALIASES.get(candidate, candidate)
+    if normalized.get("recipe") not in CGA_RECIPES:
+        raise ValueError(
+            f"recipe must be one of {sorted(CGA_RECIPES)}; got {normalized.get('recipe')!r}."
+        )
+
+    domain = normalized.get("domain")
+    if isinstance(domain, str):
+        candidate = domain.strip().lower()
+        normalized["domain"] = CGA_DOMAIN_ALIASES.get(candidate, domain.strip())
+    if normalized.get("domain") not in CGA_DOMAINS:
+        raise ValueError(
+            f"domain must be one of {sorted(CGA_DOMAINS)}; got {normalized.get('domain')!r}."
+        )
+
+    try:
+        normalized["code"] = int(normalized.get("code"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"code must be an integer in {sorted(CGA_CODES)}.") from exc
+    if normalized["code"] not in CGA_CODES:
+        raise ValueError(f"code must be one of {sorted(CGA_CODES)}; got {normalized['code']!r}.")
+
+    if "taxonomy_id" in normalized and normalized["taxonomy_id"] is not None:
+        try:
+            normalized["taxonomy_id"] = int(normalized["taxonomy_id"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("taxonomy_id must be an integer.") from exc
+        if normalized["taxonomy_id"] <= 0:
+            raise ValueError("taxonomy_id must be a positive integer.")
+
+    for lib_key, read_key in (("paired_end_libs", "read1"), ("single_end_libs", "read")):
+        libs = normalized.get(lib_key)
+        if libs is None:
+            continue
+        if not isinstance(libs, list) or len(libs) == 0:
+            raise ValueError(f"{lib_key} must be a non-empty list when provided.")
+        for i, lib in enumerate(libs):
+            if not isinstance(lib, dict):
+                raise ValueError(f"{lib_key}[{i}] must be an object.")
+            read_val = lib.get(read_key)
+            if not isinstance(read_val, str) or not read_val.strip():
+                raise ValueError(f"{lib_key}[{i}] must include non-empty '{read_key}'.")
+            platform = lib.get("platform", "infer")
+            if isinstance(platform, str):
+                platform = CGA_PLATFORM_ALIASES.get(platform.strip().lower(), platform.strip().lower())
+            if platform not in CGA_PLATFORMS:
+                raise ValueError(
+                    f"{lib_key}[{i}].platform must be one of {sorted(CGA_PLATFORMS)}; got {lib.get('platform')!r}."
+                )
+            lib["platform"] = platform
+
+    input_type = normalized["input_type"]
+    has_reads = any(
+        normalized.get(name) not in (None, "", [])
+        for name in ("paired_end_libs", "single_end_libs", "srr_ids")
+    )
+    has_contigs = any(
+        normalized.get(name) not in (None, "", [])
+        for name in ("contigs", "reference_assembly")
+    )
+    has_genbank = any(
+        normalized.get(name) not in (None, "", [])
+        for name in ("genbank_file", "gto")
+    )
+
+    if input_type == "reads":
+        if not has_reads:
+            raise ValueError(
+                "When input_type='reads', provide at least one of paired_end_libs, single_end_libs, or srr_ids."
+            )
+        if has_contigs or has_genbank:
+            raise ValueError("When input_type='reads', do not include contigs/genbank input fields.")
+    elif input_type == "contigs":
+        if not has_contigs:
+            raise ValueError("When input_type='contigs', provide contigs or reference_assembly.")
+        if has_reads or has_genbank:
+            raise ValueError("When input_type='contigs', do not include reads/genbank input fields.")
+    else:  # genbank
+        if not has_genbank:
+            raise ValueError("When input_type='genbank', provide genbank_file or gto.")
+        if has_reads or has_contigs:
+            raise ValueError("When input_type='genbank', do not include reads/contigs input fields.")
+
+    return normalized
 
 def _build_grid_payload(
     entity_type: str,
@@ -430,6 +621,7 @@ async def start_comprehensive_genome_analysis_app(api: JsonRpcCaller, token: str
             "analyze_quality": analyze_quality,
             "debug_level": debug_level
         })
+        params = _normalize_and_validate_comprehensive_genome_analysis_params(params)
         data = [app_name, params, {}]
         result = await api.acall("AppService.start_app2", data, _generate_numerical_uuid(), token)
         if isinstance(result, (list, dict)):

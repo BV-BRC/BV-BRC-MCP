@@ -28,7 +28,11 @@ from functions.service_functions import (
     start_metacats_app, start_proteome_comparison_app, start_comparative_systems_app,
     start_docking_app, start_similar_genome_finder_app, get_service_info
 )
-from functions.workflow_functions import generate_workflow_manifest_internal, create_and_execute_workflow_internal
+from functions.workflow_functions import (
+    generate_workflow_manifest_internal,
+    create_and_execute_workflow_internal,
+    prepare_workflow_for_engine_validation,
+)
 from typing import Any, List, Dict, Optional, Union
 
 
@@ -537,6 +541,25 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "source": "bvbrc-service"
             }
 
+        # Accept either:
+        # 1) A raw manifest (workflow definition)
+        # 2) The full plan_workflow result wrapper containing {"workflow_json": {...}, ...}
+        workflow_manifest = workflow_json
+        if (
+            isinstance(workflow_json, dict)
+            and isinstance(workflow_json.get('workflow_json'), dict)
+        ):
+            workflow_manifest = workflow_json['workflow_json']
+
+        if not isinstance(workflow_manifest, dict):
+            return {
+                "workflow_json": workflow_json,
+                "error": "workflow_json must be a dictionary",
+                "errorType": "INVALID_PARAMETERS",
+                "hint": "Pass either a raw workflow manifest or the full plan_workflow response object",
+                "source": "bvbrc-service"
+            }
+
         # Get authentication token
         auth_token = token_provider.get_token(token)
         if not auth_token:
@@ -597,21 +620,10 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     "source": "bvbrc-service"
                 }
 
-            # Clean the workflow before submission - remove any fields that workflow engine assigns
-            # The workflow engine assigns workflow_id and step_ids, so we must remove them if present
-            workflow_for_submission = workflow_json.copy()
-            workflow_for_submission.pop('workflow_id', None)  # Remove if present
-            workflow_for_submission.pop('status', None)  # Remove if present
-            workflow_for_submission.pop('created_at', None)  # Remove if present
-            workflow_for_submission.pop('updated_at', None)  # Remove if present
-            workflow_for_submission.pop('submitted_at', None)  # Remove if present
-
-            # Clean steps - remove execution metadata
-            if 'steps' in workflow_for_submission:
-                for step in workflow_for_submission['steps']:
-                    step.pop('step_id', None)  # Workflow engine assigns this
-                    step.pop('status', None)  # Execution metadata
-                    step.pop('task_id', None)  # Execution metadata
+            # Clean workflow before submission using shared helper used in planning path.
+            # This strips engine-assigned/execution metadata and any wrapper fields
+            # that do not belong to WorkflowDefinition.
+            workflow_for_submission = prepare_workflow_for_engine_validation(workflow_manifest)
 
             # Submit the workflow
             print(f"Submitting workflow to {engine_url}...", file=sys.stderr)
@@ -621,7 +633,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
 
             # Update the workflow_json with the real workflow_id from the engine
             # This ensures the returned workflow_json has the actual ID, not any placeholder
-            updated_workflow_json = workflow_json.copy()
+            updated_workflow_json = workflow_for_submission.copy()
             updated_workflow_json['workflow_id'] = result.get('workflow_id')
 
             # Also update status and timestamps if available

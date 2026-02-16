@@ -8,6 +8,7 @@ import aiohttp
 import asyncio
 from typing import Dict, Any, Optional
 import sys
+import json
 
 
 class WorkflowEngineClient:
@@ -23,6 +24,75 @@ class WorkflowEngineClient:
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+
+    def _sanitize_workflow_payload(self, workflow_json: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize tool/planner wrapper payloads into a pure WorkflowDefinition payload.
+
+        This is a defensive last line of protection so workflow engine endpoints never
+        receive helper fields like workflow_description/prompt_payload even if upstream
+        callers accidentally pass wrapper objects.
+        """
+        payload: Dict[str, Any] = workflow_json or {}
+
+        # Accept either a raw workflow manifest or a wrapped planner response.
+        if isinstance(payload, dict) and isinstance(payload.get("workflow_json"), dict):
+            payload = payload["workflow_json"]
+
+        if not isinstance(payload, dict):
+            return {}
+
+        cleaned = json.loads(json.dumps(payload))
+
+        # Planner/wrapper metadata that does not belong to WorkflowDefinition.
+        disallowed_top_level_fields = {
+            "workflow_json",
+            "workflow_description",
+            "message",
+            "ready_for_submission",
+            "validation",
+            "prompt_payload",
+            "source",
+            "hint",
+            "error",
+            "errorType",
+            "stage",
+            "traceback",
+            "partial_workflow",
+            # Engine/runtime metadata that should not be sent to validate/submit.
+            "workflow_id",
+            "status",
+            "created_at",
+            "updated_at",
+            "submitted_at",
+            "started_at",
+            "completed_at",
+            "error_message",
+            "execution_metadata",
+            "log_file_path",
+            "auth_token",
+        }
+        for field in disallowed_top_level_fields:
+            cleaned.pop(field, None)
+
+        # Strip step execution metadata when present.
+        if isinstance(cleaned.get("steps"), list):
+            for step in cleaned["steps"]:
+                if not isinstance(step, dict):
+                    continue
+                for step_field in (
+                    "step_id",
+                    "status",
+                    "task_id",
+                    "submitted_at",
+                    "started_at",
+                    "completed_at",
+                    "elapsed_time",
+                    "error_message",
+                ):
+                    step.pop(step_field, None)
+
+        return cleaned
         
     async def submit_workflow(self, workflow_json: Dict[str, Any], auth_token: str) -> Dict[str, Any]:
         """
@@ -48,10 +118,11 @@ class WorkflowEngineClient:
         }
         
         try:
+            sanitized_payload = self._sanitize_workflow_payload(workflow_json)
             print(f"Submitting workflow to workflow engine: {url}", file=sys.stderr)
             
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=workflow_json, headers=headers) as response:
+                async with session.post(url, json=sanitized_payload, headers=headers) as response:
                     response_text = await response.text()
                     
                     if response.status == 201:
@@ -137,10 +208,11 @@ class WorkflowEngineClient:
         }
 
         try:
+            sanitized_payload = self._sanitize_workflow_payload(workflow_json)
             print(f"Validating workflow in workflow engine: {url}", file=sys.stderr)
 
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=workflow_json, headers=headers) as response:
+                async with session.post(url, json=sanitized_payload, headers=headers) as response:
                     response_text = await response.text()
 
                     if response.status == 200:

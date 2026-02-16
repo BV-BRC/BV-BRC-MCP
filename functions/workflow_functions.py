@@ -837,6 +837,7 @@ def prepare_workflow_for_engine_validation(workflow_json: Dict[str, Any]) -> Dic
     workflow_for_engine.pop('execution_metadata', None)
     workflow_for_engine.pop('log_file_path', None)
     workflow_for_engine.pop('auth_token', None)
+    workflow_for_engine.pop('workflow_description', None)
 
     # Step-level execution metadata
     if 'steps' in workflow_for_engine and isinstance(workflow_for_engine['steps'], list):
@@ -1066,12 +1067,15 @@ async def create_and_execute_workflow_internal(
                         validation_result = await client.validate_workflow(workflow_for_validation, token)
 
                         validated_workflow_json = validation_result.get('workflow_json', workflow_for_validation)
-                        workflow_description = build_workflow_description(validated_workflow_json)
+                        # Ensure plan_workflow consistently returns resolved paths even when
+                        # the workflow engine validation path is used.
+                        resolved_workflow_json = resolve_workflow_variables_locally(validated_workflow_json)
+                        workflow_description = build_workflow_description(resolved_workflow_json)
                         print("Stage 2b: Workflow engine validation successful", file=sys.stderr)
                         return {
-                            "workflow_json": validated_workflow_json,
+                            "workflow_json": resolved_workflow_json,
                             "workflow_description": workflow_description,
-                            "message": "Workflow manifest generated and validated by workflow engine (not submitted for execution)",
+                            "message": "Workflow manifest generated, resolved, and validated by workflow engine (not submitted for execution)",
                             "ready_for_submission": True,
                             "validation": {
                                 "source": "workflow_engine",

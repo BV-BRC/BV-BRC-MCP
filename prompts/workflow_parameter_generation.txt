@@ -134,6 +134,7 @@ Return a JSON object with this EXACT structure:
    - If REQUIRED PARAMETER RULES are provided, treat them as source of truth:
      - Use any defaults listed there when the user did not specify a value
      - Only use values listed in enum_params for those fields
+     - Enforce conditional_required rules: if a `when` condition matches, include all fields in `require`
    - Pay special attention to parameter formats (arrays vs strings, objects vs primitives)
 
 5. Use the output patterns provided to define step outputs correctly

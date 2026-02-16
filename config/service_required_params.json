@@ -627,6 +627,32 @@
       "input_feature_group",
       "input_genome_group"
     ],
+    "conditional_required": [
+      {
+        "when": {
+          "db_source": "precomputed_database"
+        },
+        "require": [
+          "db_precomputed_database"
+        ]
+      },
+      {
+        "when": {
+          "input_source": "id_list"
+        },
+        "require": [
+          "input_id_list"
+        ]
+      },
+      {
+        "when": {
+          "db_source": "id_list"
+        },
+        "require": [
+          "db_id_list"
+        ]
+      }
+    ],
     "required_outputs": []
   },
   "influenza_ha_subtype_conversion": {
@@ -803,7 +829,6 @@
       "output_path",
       "output_file",
       "scientific_name",
-      "taxonomy_id",
       "code",
       "domain"
     ],
@@ -823,13 +848,8 @@
       "skip_indexing": false,
       "code": 0,
       "domain": "auto",
-      "lowvan_min_contig_length": 300,
-      "lowvan_max_contig_length": 40000,
       "analyze_quality": false,
-      "debug_level": 0,
-      "platform": "infer",
-      "interleaved": false,
-      "read_orientation_outward": false
+      "debug_level": 0
     },
     "enum_params": {
       "input_type": [
@@ -876,6 +896,36 @@
       "gto",
       "genbank_file",
       "contigs"
+    ],
+    "conditional_required": [
+      {
+        "when": {
+          "input_type": "reads"
+        },
+        "require_one_of": [
+          "paired_end_libs",
+          "single_end_libs",
+          "srr_ids"
+        ]
+      },
+      {
+        "when": {
+          "input_type": "contigs"
+        },
+        "require_one_of": [
+          "contigs",
+          "reference_assembly"
+        ]
+      },
+      {
+        "when": {
+          "input_type": "genbank"
+        },
+        "require_one_of": [
+          "genbank_file",
+          "gto"
+        ]
+      }
     ],
     "required_outputs": []
   }
