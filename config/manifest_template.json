@@ -56,6 +56,10 @@
       "description": "Query tasks"
     },
     {
+      "name": "list_jobs",
+      "description": "List jobs with sorting and filtering"
+    },
+    {
       "name": "genome_assembly",
       "description": "Genome assembly service"
     },

@@ -1,5 +1,5 @@
 from common.json_rpc import JsonRpcCaller
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import asyncio
 import uuid
 import json
@@ -33,13 +33,13 @@ def _resolve_output_path(output_path: str, user_id: str) -> str:
 def get_service_info(service_name: str) -> str:
     """
     Get service information from prompt files.
-    
+
     Args:
         service_name: Name of the service (e.g., 'genome_assembly', 'blast', 'date')
-    
+
     Returns:
         String containing the service information/parameters from the prompt file
-        
+
     Raises:
         FileNotFoundError: If the prompt file for the service doesn't exist
         IOError: If there's an error reading the file
@@ -49,22 +49,22 @@ def get_service_info(service_name: str) -> str:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         # Get the parent directory (bvbrc-mcp-server/)
         parent_dir = os.path.dirname(script_dir)
-        
+
         # Construct the path to the prompt file
         prompt_file_path = os.path.join(parent_dir, 'prompts', 'services', f'{service_name}.txt')
-        
+
         # Check if file exists
         if not os.path.exists(prompt_file_path):
             raise FileNotFoundError(f"Service prompt file not found: {service_name}.txt")
-        
+
         # Read and return the file contents
         with open(prompt_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+
         # Append output_path instruction to every service prompt
         output_path_note = "\n\nNote: output_path is relative to the user's home directory. Do not start the path with a '/' or with 'home'."
         return content + output_path_note
-            
+
     except Exception as e:
         raise Exception(f"Error reading service info for '{service_name}': {str(e)}")
 
@@ -99,9 +99,9 @@ async def start_date_app(api: JsonRpcCaller, token: str = None, user_id: str = N
             "output_path": output_path,
             "output_file": output_file
         })
-        
+
         data = ["Date", params, {}]
-        
+
         result = await api.acall("AppService.start_app2", data, _generate_numerical_uuid(), token)
         if isinstance(result, (list, dict)):
             return {
@@ -202,6 +202,89 @@ async def query_tasks(api: JsonRpcCaller, token: str = None, user_id: str = None
         }
     except Exception as e:
         print(e)
+        return {
+            "error": str(e),
+            "errorType": "API_ERROR",
+            "source": "bvbrc-service"
+        }
+
+async def list_jobs(
+    api: JsonRpcCaller,
+    token: str = None,
+    user_id: str = None,
+    limit: int = 20,
+    offset: int = 0,
+    sort_by: str = "submit_time",
+    sort_dir: str = "desc",
+    status: Optional[str] = None,
+    service: Optional[str] = None,
+    search: Optional[str] = None,
+    include_archived: bool = False
+) -> dict:
+    """
+    List user jobs with optional filtering/sorting.
+
+    Uses AppService.enumerate_tasks_filtered(offset, limit, simpleFilter).
+    """
+    try:
+        simple_filter: Dict[str, Any] = {}
+
+        if status:
+            simple_filter["status"] = status
+        if service:
+            simple_filter["app"] = service
+        if search:
+            simple_filter["search"] = search
+        if include_archived:
+            # API expects numeric 1, mirroring frontend behavior.
+            simple_filter["include_archived"] = 1
+
+        sort_field_map = {
+            "submit_time": "submit_time",
+            "start_time": "start_time",
+            "completed_time": "finish_time",
+            "finish_time": "finish_time",
+            "application_name": "application_id",
+            "app": "application_id",
+            "status": "service_status",
+            "id": "id",
+            "output_name": "output_name",
+            "parameters": "output_name"
+        }
+        simple_filter["sort_field"] = sort_field_map.get(sort_by, "submit_time")
+        simple_filter["sort_order"] = sort_dir if sort_dir in ("asc", "desc") else "desc"
+
+        result = await api.acall(
+            "AppService.enumerate_tasks_filtered",
+            [offset, limit, simple_filter],
+            _generate_numerical_uuid(),
+            token
+        )
+
+        # Expected shape: [jobs, total]
+        jobs: List[Dict[str, Any]] = []
+        total = 0
+        if isinstance(result, list) and len(result) >= 2:
+            jobs = result[0] if isinstance(result[0], list) else []
+            total = result[1] if isinstance(result[1], (int, float)) else len(jobs)
+
+        # Keep parity with frontend behavior.
+        jobs = [job for job in jobs if isinstance(job, dict) and job.get("status") != "deleted"]
+
+        return {
+            "items": jobs,
+            "total": total,
+            "count": len(jobs),
+            "offset": offset,
+            "limit": limit,
+            "query": search,
+            "status": status,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+            "source": "bvbrc-service"
+        }
+    except Exception as e:
+        print(f"Error in list_jobs: {e}", file=sys.stderr)
         return {
             "error": str(e),
             "errorType": "API_ERROR",
@@ -1377,7 +1460,7 @@ async def start_similar_genome_finder_app(api: JsonRpcCaller, token: str = None,
         output_path, output_file = _set_default_output_paths(user_id, app_name, output_path, output_file)
         # Resolve relative paths to absolute paths
         output_path = _resolve_output_path(output_path, user_id)
-        
+
         # Call the Minhash.compute_genome_distance_for_genome2 method
         function_call = ""
         if selectedGenomeId:
@@ -1388,7 +1471,7 @@ async def start_similar_genome_finder_app(api: JsonRpcCaller, token: str = None,
             function_call = "Minhash.compute_genome_distance_for_fasta2"
         else:
             return "Error: selectedGenomeId or fasta_file is required"
-        
+
         result = await api.acall(function_call, params, _generate_numerical_uuid(), token)
         if isinstance(result, (list, dict)):
             return {
