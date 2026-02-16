@@ -110,6 +110,98 @@ class WorkflowEngineClient:
                 f"Unexpected error: {str(e)}",
                 error_type="UNKNOWN_ERROR"
             ) from e
+
+    async def validate_workflow(self, workflow_json: Dict[str, Any], auth_token: str) -> Dict[str, Any]:
+        """
+        Validate and normalize a workflow in the workflow engine without submitting it.
+
+        Args:
+            workflow_json: Complete workflow manifest dictionary
+            auth_token: BV-BRC authentication token
+
+        Returns:
+            Dictionary with:
+            - valid: True if validation succeeded
+            - workflow_json: Normalized/validated workflow manifest
+            - warnings: Optional validation warnings
+            - auto_fixes: Optional list of auto-applied fixes
+            - message: Validation status message
+
+        Raises:
+            WorkflowEngineError: If validation fails
+        """
+        url = f"{self.base_url}/workflows/validate"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": auth_token
+        }
+
+        try:
+            print(f"Validating workflow in workflow engine: {url}", file=sys.stderr)
+
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.post(url, json=workflow_json, headers=headers) as response:
+                    response_text = await response.text()
+
+                    if response.status == 200:
+                        result = await response.json()
+                        print("Workflow validated successfully", file=sys.stderr)
+                        return result
+                    elif response.status == 400:
+                        try:
+                            error_data = await response.json()
+                            error_msg = error_data.get('detail', response_text)
+                        except Exception:
+                            error_msg = response_text
+                        raise WorkflowEngineError(
+                            f"Workflow validation failed: {error_msg}",
+                            error_type="VALIDATION_FAILED",
+                            status_code=400
+                        )
+                    elif response.status == 404:
+                        raise WorkflowEngineError(
+                            "Workflow engine validate endpoint not found",
+                            error_type="ENDPOINT_NOT_FOUND",
+                            status_code=404
+                        )
+                    elif response.status == 500:
+                        try:
+                            error_data = await response.json()
+                            error_msg = error_data.get('detail', response_text)
+                        except Exception:
+                            error_msg = response_text
+                        raise WorkflowEngineError(
+                            f"Workflow engine internal error during validation: {error_msg}",
+                            error_type="ENGINE_ERROR",
+                            status_code=500
+                        )
+                    else:
+                        raise WorkflowEngineError(
+                            f"Unexpected response from workflow engine validation: {response.status} - {response_text}",
+                            error_type="UNKNOWN_ERROR",
+                            status_code=response.status
+                        )
+
+        except WorkflowEngineError:
+            raise
+        except aiohttp.ClientConnectorError as e:
+            print(f"Failed to connect to workflow engine at {url}: {e}", file=sys.stderr)
+            raise WorkflowEngineError(
+                f"Cannot connect to workflow engine at {self.base_url}. Is it running?",
+                error_type="CONNECTION_FAILED"
+            ) from e
+        except asyncio.TimeoutError as e:
+            print(f"Workflow engine validation request timed out: {e}", file=sys.stderr)
+            raise WorkflowEngineError(
+                f"Workflow engine validation request timed out after {self.timeout.total}s",
+                error_type="TIMEOUT"
+            ) from e
+        except Exception as e:
+            print(f"Unexpected error validating workflow: {e}", file=sys.stderr)
+            raise WorkflowEngineError(
+                f"Unexpected error: {str(e)}",
+                error_type="UNKNOWN_ERROR"
+            ) from e
     
     async def get_workflow_status(self, workflow_id: str) -> Dict[str, Any]:
         """

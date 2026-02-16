@@ -257,7 +257,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         Plan a workflow from natural language description without executing it.
         
         This tool generates a workflow manifest (plan) based on your natural language request.
-        The workflow is validated for basic structure but NOT submitted for execution.
+        The workflow is fully planned and validated (including workflow-engine validation
+        when available) but NOT submitted for execution.
         Use submit_workflow() to actually execute the planned workflow.
         
         This two-step approach allows you to:
@@ -300,8 +301,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         Notes:
             - The returned workflow_json can be passed to submit_workflow() for execution
             - You can inspect and modify the workflow_json before submission
-            - The workflow is validated for basic structure but detailed validation 
-              occurs when submitted to the workflow engine
+            - The workflow is validated locally and, when configured, by the workflow engine
+            - The returned workflow_json is prepared for submit_workflow()
         """
         if not user_query:
             return {

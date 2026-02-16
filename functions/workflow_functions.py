@@ -5,6 +5,7 @@ import os
 import json
 import sys
 import time
+import re
 from typing import Dict, List, Any, Optional
 from common.llm_client import LLMClient
 from common.json_rpc import JsonRpcCaller
@@ -776,6 +777,131 @@ def validate_workflow_structure(workflow_json: Dict[str, Any]) -> tuple[bool, Op
         return False, f"Validation error: {str(e)}"
 
 
+def prepare_workflow_for_engine_validation(workflow_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Remove engine-assigned or execution metadata fields before engine validation/submission.
+
+    The workflow engine assigns workflow_id and step_id values at submission time.
+    Planning/validation payloads should exclude these fields.
+    """
+    workflow_for_engine = json.loads(json.dumps(workflow_json))
+
+    # Top-level execution metadata fields
+    workflow_for_engine.pop('workflow_id', None)
+    workflow_for_engine.pop('status', None)
+    workflow_for_engine.pop('created_at', None)
+    workflow_for_engine.pop('updated_at', None)
+    workflow_for_engine.pop('submitted_at', None)
+    workflow_for_engine.pop('started_at', None)
+    workflow_for_engine.pop('completed_at', None)
+    workflow_for_engine.pop('error_message', None)
+    workflow_for_engine.pop('execution_metadata', None)
+    workflow_for_engine.pop('log_file_path', None)
+    workflow_for_engine.pop('auth_token', None)
+
+    # Step-level execution metadata
+    if 'steps' in workflow_for_engine and isinstance(workflow_for_engine['steps'], list):
+        for step in workflow_for_engine['steps']:
+            if not isinstance(step, dict):
+                continue
+            step.pop('step_id', None)
+            step.pop('status', None)
+            step.pop('task_id', None)
+            step.pop('submitted_at', None)
+            step.pop('started_at', None)
+            step.pop('completed_at', None)
+            step.pop('elapsed_time', None)
+            step.pop('error_message', None)
+
+    return workflow_for_engine
+
+
+def resolve_workflow_variables_locally(workflow_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Best-effort local variable resolution for planned workflows.
+
+    This mirrors the most important planner-facing behavior from the workflow engine:
+    1) Resolve simple base_context vars (e.g. ${workspace_output_folder})
+    2) Resolve ${params.xxx} inside step outputs
+    3) Resolve ${steps.step.outputs.name} in workflow_outputs
+    """
+    workflow = json.loads(json.dumps(workflow_json))
+    var_pattern = re.compile(r"\$\{([^}]+)\}")
+
+    def resolve_simple_vars(value: Any, variables: Dict[str, Any]) -> Any:
+        if isinstance(value, str):
+            resolved = value
+            for match in var_pattern.findall(value):
+                # Only resolve simple identifiers (no dotted expressions).
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", match) and match in variables:
+                    resolved = resolved.replace(f"${{{match}}}", str(variables[match]))
+            return resolved
+        if isinstance(value, dict):
+            return {k: resolve_simple_vars(v, variables) for k, v in value.items()}
+        if isinstance(value, list):
+            return [resolve_simple_vars(v, variables) for v in value]
+        return value
+
+    # Pass 1: resolve simple base_context references everywhere except inside base_context.
+    base_context = workflow.get("base_context", {})
+    variables = dict(base_context) if isinstance(base_context, dict) else {}
+    for key, value in list(workflow.items()):
+        if key == "base_context":
+            continue
+        workflow[key] = resolve_simple_vars(value, variables)
+
+    # Pass 2: resolve ${params.x} inside each step outputs.
+    steps = workflow.get("steps", [])
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            params = step.get("params", {})
+            outputs = step.get("outputs")
+            if not isinstance(params, dict) or not isinstance(outputs, dict):
+                continue
+
+            def resolve_params_refs(value: Any) -> Any:
+                if isinstance(value, str):
+                    resolved = value
+                    for match in var_pattern.findall(value):
+                        if match.startswith("params."):
+                            param_name = match.split(".", 1)[1]
+                            if param_name in params:
+                                resolved = resolved.replace(f"${{{match}}}", str(params[param_name]))
+                    return resolved
+                if isinstance(value, dict):
+                    return {k: resolve_params_refs(v) for k, v in value.items()}
+                if isinstance(value, list):
+                    return [resolve_params_refs(v) for v in value]
+                return value
+
+            step["outputs"] = resolve_params_refs(outputs)
+
+    # Pass 3: resolve workflow_outputs references to step outputs.
+    if isinstance(steps, list):
+        step_outputs_map: Dict[str, Dict[str, Any]] = {}
+        for step in steps:
+            if isinstance(step, dict) and isinstance(step.get("step_name"), str):
+                step_outputs_map[step["step_name"]] = step.get("outputs", {}) or {}
+
+        resolved_workflow_outputs = []
+        for item in workflow.get("workflow_outputs", []) or []:
+            if not isinstance(item, str):
+                resolved_workflow_outputs.append(item)
+                continue
+            m = re.fullmatch(r"\$\{steps\.([A-Za-z_][A-Za-z0-9_]*)\.outputs\.([A-Za-z_][A-Za-z0-9_]*)\}", item)
+            if not m:
+                resolved_workflow_outputs.append(item)
+                continue
+            step_name, output_name = m.group(1), m.group(2)
+            resolved_value = step_outputs_map.get(step_name, {}).get(output_name, item)
+            resolved_workflow_outputs.append(resolved_value)
+        workflow["workflow_outputs"] = resolved_workflow_outputs
+
+    return workflow
+
+
 async def create_and_execute_workflow_internal(
     user_query: str,
     api: JsonRpcCaller,
@@ -883,12 +1009,73 @@ async def create_and_execute_workflow_internal(
         
         print("Stage 2: Basic validation passed (detailed validation will occur in workflow engine)", file=sys.stderr)
         
-        # If auto_execute is False, return the validated workflow JSON only
+        # If auto_execute is False, return a fully planned/validated workflow JSON.
+        # Prefer workflow-engine validation when enabled so we reuse the same
+        # resolver/validator/defaulting pipeline as real submission.
         if not auto_execute:
-            print("auto_execute=False, returning workflow JSON only", file=sys.stderr)
+            engine_validation_warning = None
+            if workflow_engine_config and workflow_engine_config.get('enabled', False):
+                try:
+                    engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
+                    engine_timeout = workflow_engine_config.get('timeout', 30)
+                    client = WorkflowEngineClient(base_url=engine_url, timeout=engine_timeout)
+
+                    is_healthy = await client.health_check()
+                    if is_healthy:
+                        print("Stage 2b: Validating workflow in workflow engine...", file=sys.stderr)
+                        workflow_for_validation = prepare_workflow_for_engine_validation(workflow_json)
+                        validation_result = await client.validate_workflow(workflow_for_validation, token)
+
+                        validated_workflow_json = validation_result.get('workflow_json', workflow_for_validation)
+                        print("Stage 2b: Workflow engine validation successful", file=sys.stderr)
+                        return {
+                            "workflow_json": validated_workflow_json,
+                            "message": "Workflow manifest generated and validated by workflow engine (not submitted for execution)",
+                            "ready_for_submission": True,
+                            "validation": {
+                                "source": "workflow_engine",
+                                "valid": validation_result.get('valid', True),
+                                "warnings": validation_result.get('warnings', []),
+                                "auto_fixes": validation_result.get('auto_fixes', [])
+                            },
+                            "prompt_payload": prompt_payload,
+                            "source": "bvbrc-service"
+                        }
+                    else:
+                        print("Workflow engine unavailable for planning validation; returning locally validated workflow", file=sys.stderr)
+                        engine_validation_warning = "Workflow engine health check failed during planning validation"
+                except WorkflowEngineError as e:
+                    if e.error_type == "VALIDATION_FAILED":
+                        return {
+                            "error": str(e),
+                            "errorType": "VALIDATION_FAILED",
+                            "stage": "validation",
+                            "partial_workflow": workflow_json,
+                            "hint": "Workflow was generated but failed workflow engine validation",
+                            "prompt_payload": prompt_payload,
+                            "source": "bvbrc-service"
+                        }
+                    print(f"Workflow engine validation skipped due to error: {e}", file=sys.stderr)
+                    engine_validation_warning = f"Workflow engine validation skipped: {str(e)}"
+                except Exception as e:
+                    print(f"Unexpected error during planning validation: {e}", file=sys.stderr)
+                    engine_validation_warning = f"Workflow engine validation skipped due to unexpected error: {str(e)}"
+
+            print("auto_execute=False, returning locally validated workflow JSON", file=sys.stderr)
+            locally_resolved_workflow = resolve_workflow_variables_locally(workflow_json)
+            warnings = []
+            if engine_validation_warning:
+                warnings.append(engine_validation_warning)
             return {
-                "workflow_json": workflow_json,
-                "message": "Workflow manifest generated and validated (not submitted for execution)",
+                "workflow_json": locally_resolved_workflow,
+                "message": "Workflow manifest generated and locally resolved/validated (not submitted for execution)",
+                "ready_for_submission": True,
+                "validation": {
+                    "source": "local",
+                    "valid": True,
+                    "warnings": warnings,
+                    "auto_fixes": []
+                },
                 "prompt_payload": prompt_payload,
                 "source": "bvbrc-service"
             }
@@ -928,18 +1115,7 @@ async def create_and_execute_workflow_internal(
             
             # Clean the workflow before submission - remove any fields that workflow engine assigns
             # The workflow engine assigns workflow_id and step_ids, so we must remove them if present
-            workflow_for_submission = workflow_json.copy()
-            workflow_for_submission.pop('workflow_id', None)  # Remove if LLM added it
-            workflow_for_submission.pop('status', None)  # Remove if present
-            workflow_for_submission.pop('created_at', None)  # Remove if present
-            workflow_for_submission.pop('updated_at', None)  # Remove if present
-            
-            # Clean steps - remove execution metadata
-            if 'steps' in workflow_for_submission:
-                for step in workflow_for_submission['steps']:
-                    step.pop('step_id', None)  # Workflow engine assigns this
-                    step.pop('status', None)  # Execution metadata
-                    step.pop('task_id', None)  # Execution metadata
+            workflow_for_submission = prepare_workflow_for_engine_validation(workflow_json)
             
             # Submit the workflow
             result = await client.submit_workflow(workflow_for_submission, token)
