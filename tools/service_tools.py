@@ -39,11 +39,11 @@ def extract_userid_from_token(token: str = None) -> str:
     """
     if not token:
         return None
-    
+
     try:
         user_id = token.split('|')[0].replace('un=','')
         return user_id
-            
+
     except Exception as e:
         print(f"Error extracting user ID from token: {e}")
         return None
@@ -52,14 +52,14 @@ def extract_userid_from_token(token: str = None) -> str:
 def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_finder_api: JsonRpcCaller, token_provider):
     """
     Register all MCP tools with the FastMCP server instance.
-    
+
     Args:
         mcp: FastMCP server instance
         api: Main service API caller
         similar_genome_finder_api: Similar genome finder API caller
         token_provider: TokenProvider instance for handling authentication tokens
     """
-    
+
     # Mapping between BV-BRC API service names and user-friendly names
     # API_NAME -> user_friendly_name
     BVBRC_TO_FRIENDLY = {
@@ -96,15 +96,15 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         'SimilarGenomeFinder': 'similar_genome_finder',
         'FastqUtils': 'fastqutils',
     }
-    
+
     # Reverse mapping: user_friendly_name -> API_NAME
     FRIENDLY_TO_BVBRC = {v: k for k, v in BVBRC_TO_FRIENDLY.items()}
-    
+
     # Service mapping: maps user-friendly service names to their handler functions
     SERVICE_MAP = {
         # Basic Services
         'date': start_date_app,
-        
+
         # Genomics Analysis Services
         'genome_assembly': start_genome_assembly_app,
         'genome_annotation': start_genome_annotation_app,
@@ -113,29 +113,29 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         'primer_design': start_primer_design_app,
         'variation': start_variation_app,
         'tnseq': start_tnseq_app,
-        
+
         # Phylogenomics Services
         'bacterial_genome_tree': start_bacterial_genome_tree_app,
         'gene_tree': start_gene_tree_app,
         'core_genome_mlst': start_core_genome_mlst_app,
         'whole_genome_snp': start_whole_genome_snp_app,
-        
+
         # Metagenomics Services
         'taxonomic_classification': start_taxonomic_classification_app,
         'metagenomic_binning': start_metagenomic_binning_app,
         'metagenomic_read_mapping': start_metagenomic_read_mapping_app,
-        
+
         # Transcriptomics Services
         'rnaseq': start_rnaseq_app,
         'expression_import': start_expression_import_app,
-        
+
         # Viral Services
         'sars_wastewater_analysis': start_sars_wastewater_analysis_app,
         'sequence_submission': start_sequence_submission_app,
         'influenza_ha_subtype_conversion': start_influenza_ha_subtype_conversion_app,
         'subspecies_classification': start_subspecies_classification_app,
         'viral_assembly': start_viral_assembly_app,
-        
+
         # Additional Services
         'genome_alignment': start_genome_alignment_app,
         'sars_genome_analysis': start_sars_genome_analysis_app,
@@ -146,19 +146,19 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         'docking': start_docking_app,
         'fastqutils': start_fastq_utils_app,
     }
-    
+
     # Special case for similar_genome_finder which uses a different API
     SPECIAL_API_SERVICES = {
         'similar_genome_finder': (similar_genome_finder_api, start_similar_genome_finder_app),
     }
-    
+
     # Helper Tools
-    
+
     @mcp.tool(name="list_service_apps", annotations={"readOnlyHint": True})
     async def service_enumerate_apps(token: Optional[str] = None) -> str:
         """
         Enumerate all available BV-BRC service apps.
-            
+
         Returns:
             JSON array of user-friendly service names (e.g., ["blast", "genome_assembly", "rnaseq", ...])
         """
@@ -168,12 +168,12 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
 
         user_id = extract_userid_from_token(auth_token)
         result = await enumerate_apps(api, auth_token, user_id=user_id)
-        
+
         # Parse the result and extract only the service IDs
         try:
             # Result is a JSON string, parse it
             apps_data = json.loads(result) if isinstance(result, str) else result
-            
+
             # Extract IDs from the apps list
             # The structure is typically [[app1, app2, ...]] or [app1, app2, ...]
             if isinstance(apps_data, list) and len(apps_data) > 0:
@@ -182,23 +182,23 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     apps_list = apps_data[0]
                 else:
                     apps_list = apps_data
-                
+
                 # Extract the 'id' field from each app and map to user-friendly names
                 bvbrc_service_ids = [app.get('id') for app in apps_list if isinstance(app, dict) and 'id' in app]
-                
+
                 # Convert BV-BRC service names to user-friendly names
                 # Only include services we have mappings for
                 friendly_names = []
                 for bvbrc_id in bvbrc_service_ids:
                     if bvbrc_id in BVBRC_TO_FRIENDLY:
                         friendly_names.append(BVBRC_TO_FRIENDLY[bvbrc_id])
-                
+
                 return {
                     "services": sorted(friendly_names),
                     "count": len(friendly_names),
                     "source": "bvbrc-service"
                 }
-            
+
             return {
                 "services": [],
                 "count": 0,
@@ -217,25 +217,25 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         """
         Fetch the parameter/schema details needed immediately before submitting a service job.
         Use the helpdesk tool for any other guidance or questions about which service to run.
-        
+
         Args:
             service_name: Name of the service to get submission schema for (e.g., 'genome_assembly', 'blast', 'primer_design')
             token: Authentication token (optional - will use default if not provided)
-            
+
         Returns:
             Structured parameter/schema details required for submission
         """
         if not service_name:
             return "Error: service_name parameter is required"
-            
+
         auth_token = token_provider.get_token(token)
         if not auth_token:
             return "Error: No authentication token available"
-        
+
         # Convert BV-BRC name to friendly name if needed
         if service_name in BVBRC_TO_FRIENDLY:
             service_name = BVBRC_TO_FRIENDLY[service_name]
-        
+
         try:
             return get_service_info(service_name=service_name)
         except Exception as e:
@@ -245,27 +245,27 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
 
 
     # Workflow Tools
-    
+
     @mcp.tool(name="plan_workflow")
     async def plan_workflow(
-        user_query: str = None, 
+        user_query: str = None,
         token: Optional[str] = None,
         session_id: Optional[str] = None,
         workspace_items: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Plan a workflow from natural language description without executing it.
-        
+
         This tool generates a workflow manifest (plan) based on your natural language request.
         The workflow is fully planned and validated (including workflow-engine validation
         when available) but NOT submitted for execution.
         Use submit_workflow() to actually execute the planned workflow.
-        
+
         This two-step approach allows you to:
         1. Review the planned workflow before execution
         2. Modify parameters if needed
         3. Reuse workflow plans for similar tasks
-        
+
         Args:
             user_query: Natural language description of the desired workflow.
                        Examples:
@@ -273,22 +273,23 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                        - "Perform comprehensive genome analysis for E. coli"
                        - "Map RNA-seq reads to reference genome and analyze expression"
                        - "Run BLAST on my sequences then build a phylogenetic tree"
-            
+
             token: Authentication token (optional - will use default if not provided)
-            
+
             session_id: Optional session ID for retrieving session facts to enhance workflow generation
-            
+
             workspace_items: Optional list of workspace items (files, directories, etc.) to include in workflow planning prompts
-            
+
         Returns:
             Dictionary with:
             - On success:
               {
                 "workflow_json": {...},  // Complete workflow manifest ready for submission
+                "workflow_description": "Planned workflow with ...",  // Deterministic plain-text summary from steps
                 "message": "Workflow planned and validated (not submitted)",
                 "prompt_payload": {...}  // Details about the planning process
               }
-              
+
             - On error:
               {
                 "error": "Error description",
@@ -297,9 +298,10 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "Helpful suggestion",
                 "partial_workflow": {...}  // If available
               }
-        
+
         Notes:
             - The returned workflow_json can be passed to submit_workflow() for execution
+            - workflow_description is generated deterministically from workflow steps
             - You can inspect and modify the workflow_json before submission
             - The workflow is validated locally and, when configured, by the workflow engine
             - The returned workflow_json is prepared for submit_workflow()
@@ -312,7 +314,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "Provide a natural language description of your desired workflow",
                 "source": "bvbrc-service"
             }
-        
+
         # Get authentication token
         auth_token = token_provider.get_token(token)
         if not auth_token:
@@ -322,7 +324,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "Please provide a valid authentication token",
                 "source": "bvbrc-service"
             }
-        
+
         # Extract user ID
         user_id = extract_userid_from_token(auth_token)
         if not user_id:
@@ -332,20 +334,20 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "The provided token is invalid or malformed",
                 "source": "bvbrc-service"
             }
-        
+
         try:
             # Load configuration
             config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
-            
+
             with open(config_path, 'r') as f:
                 config = json.load(f)
-            
+
             # Create LLM client
             llm_client = create_llm_client_from_config(config)
-            
+
             # Get workflow engine configuration
             workflow_engine_config = config.get('workflow_engine', {})
-            
+
             # Plan workflow (auto_execute=False means only generate, don't submit)
             result = await create_and_execute_workflow_internal(
                 user_query=user_query,
@@ -358,9 +360,9 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 session_id=session_id,
                 workspace_items=workspace_items
             )
-            
+
             return result
-            
+
         except FileNotFoundError as e:
             return {
                 "error": f"Configuration file not found: {str(e)}",
@@ -386,18 +388,18 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
     ) -> Dict[str, Any]:
         """
         Submit a planned workflow for execution.
-        
-        This tool takes a workflow manifest (typically generated by plan_workflow) and 
+
+        This tool takes a workflow manifest (typically generated by plan_workflow) and
         submits it to the workflow engine for execution. The workflow engine will:
         1. Perform detailed validation
         2. Schedule and execute workflow steps in sequence
         3. Handle dependencies between steps
         4. Track progress and results
-        
+
         Args:
             workflow_json: Complete workflow manifest dictionary (from plan_workflow or manually created)
             token: Authentication token (optional - will use default if not provided)
-            
+
         Returns:
             Dictionary with:
             - On success:
@@ -409,7 +411,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "message": "Workflow submitted for execution",
                 "status_url": "http://.../workflows/wf_123/status"
               }
-              
+
             - On error:
               {
                 "error": "Error description",
@@ -417,17 +419,17 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "Helpful suggestion",
                 "workflow_json": {...}  // Original workflow for reference
               }
-        
+
         Notes:
             - The workflow engine must be running and configured for execution
             - The workflow will be validated by the engine before execution
             - Use workflow monitoring tools to track execution progress
             - The workflow_id can be used to query status and retrieve results
-        
+
         Example:
             # First, plan the workflow
             plan = plan_workflow(user_query="Assemble and annotate genome")
-            
+
             # Review the plan, then submit it
             result = submit_workflow(workflow_json=plan["workflow_json"])
         """
@@ -439,7 +441,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "example": "submit_workflow(workflow_json=plan_result['workflow_json'])",
                 "source": "bvbrc-service"
             }
-        
+
         # Get authentication token
         auth_token = token_provider.get_token(token)
         if not auth_token:
@@ -449,7 +451,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "Please provide a valid authentication token",
                 "source": "bvbrc-service"
             }
-        
+
         # Extract user ID
         user_id = extract_userid_from_token(auth_token)
         if not user_id:
@@ -459,17 +461,17 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "hint": "The provided token is invalid or malformed",
                 "source": "bvbrc-service"
             }
-        
+
         try:
             # Load configuration
             config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.json')
-            
+
             with open(config_path, 'r') as f:
                 config = json.load(f)
-            
+
             # Get workflow engine configuration
             workflow_engine_config = config.get('workflow_engine', {})
-            
+
             # Check if workflow engine is enabled
             if not workflow_engine_config or not workflow_engine_config.get('enabled', False):
                 return {
@@ -479,13 +481,13 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     "hint": "Enable workflow_engine in config.json to submit workflows for execution",
                     "source": "bvbrc-service"
                 }
-            
+
             # Setup workflow engine client
             engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
             engine_timeout = workflow_engine_config.get('timeout', 30)
-            
+
             client = WorkflowEngineClient(base_url=engine_url, timeout=engine_timeout)
-            
+
             # Check if engine is healthy
             print("Checking workflow engine health...", file=sys.stderr)
             is_healthy = await client.health_check()
@@ -499,7 +501,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     "submission_url": f"{engine_url}/workflows/submit",
                     "source": "bvbrc-service"
                 }
-            
+
             # Clean the workflow before submission - remove any fields that workflow engine assigns
             # The workflow engine assigns workflow_id and step_ids, so we must remove them if present
             workflow_for_submission = workflow_json.copy()
@@ -508,29 +510,29 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             workflow_for_submission.pop('created_at', None)  # Remove if present
             workflow_for_submission.pop('updated_at', None)  # Remove if present
             workflow_for_submission.pop('submitted_at', None)  # Remove if present
-            
+
             # Clean steps - remove execution metadata
             if 'steps' in workflow_for_submission:
                 for step in workflow_for_submission['steps']:
                     step.pop('step_id', None)  # Workflow engine assigns this
                     step.pop('status', None)  # Execution metadata
                     step.pop('task_id', None)  # Execution metadata
-            
+
             # Submit the workflow
             print(f"Submitting workflow to {engine_url}...", file=sys.stderr)
             result = await client.submit_workflow(workflow_for_submission, auth_token)
-            
+
             print(f"Workflow submitted successfully: {result.get('workflow_id')}", file=sys.stderr)
-            
+
             # Update the workflow_json with the real workflow_id from the engine
             # This ensures the returned workflow_json has the actual ID, not any placeholder
             updated_workflow_json = workflow_json.copy()
             updated_workflow_json['workflow_id'] = result.get('workflow_id')
-            
+
             # Also update status and timestamps if available
             updated_workflow_json['status'] = result.get('status', 'pending')
             updated_workflow_json['submitted_at'] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            
+
             # Return success response
             return {
                 "workflow_id": result.get('workflow_id'),
@@ -541,7 +543,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "status_url": f"{engine_url}/workflows/{result.get('workflow_id')}/status",
                 "source": "bvbrc-service"
             }
-            
+
         except WorkflowEngineError as e:
             print(f"Workflow engine error: {e}", file=sys.stderr)
             return {

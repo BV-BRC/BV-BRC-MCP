@@ -20,7 +20,7 @@ def load_config_file(filename: str) -> Dict:
     """Load a JSON config file from the config directory."""
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config_path = os.path.join(script_dir, 'config', filename)
-    
+
     with open(config_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
@@ -29,7 +29,7 @@ def load_prompt_file(filename: str) -> str:
     """Load a prompt file from the prompts directory."""
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     prompt_path = os.path.join(script_dir, 'prompts', filename)
-    
+
     with open(prompt_path, 'r', encoding='utf-8') as f:
         return f.read()
 
@@ -37,7 +37,7 @@ def load_prompt_file(filename: str) -> str:
 def clear_service_catalog():
     """
     Clear the service catalog.
-    
+
     Useful for testing or forcing a refresh of the catalog.
     """
     global _service_catalog
@@ -48,15 +48,15 @@ def clear_service_catalog():
 async def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None) -> bool:
     """
     Initialize the service catalog at startup if a token is available.
-    
+
     This is optional - the catalog will be built on first use if not initialized here.
     Building it at startup ensures the first request is fast.
-    
+
     Args:
         api: JsonRpcCaller instance
         token: Authentication token
         user_id: User ID (optional)
-        
+
     Returns:
         True if catalog was built successfully, False otherwise
     """
@@ -73,41 +73,41 @@ async def initialize_service_catalog(api: JsonRpcCaller, token: str, user_id: st
 async def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = None, force_rebuild: bool = False) -> Dict[str, Any]:
     """
     Build a comprehensive service catalog with names, descriptions, and schemas.
-    
+
     The catalog is built once on first use and reused for all subsequent calls,
     since the service catalog is the same for all users. This avoids expensive
     API calls on every request.
-    
+
     Args:
         api: JsonRpcCaller instance
         token: Authentication token (required for first build)
         user_id: User ID (optional, not used but kept for API compatibility)
         force_rebuild: Force rebuilding the catalog even if it exists (default: False)
-        
+
     Returns:
         Dictionary with service information
     """
     global _service_catalog
-    
+
     # Return cached catalog if it exists and we're not forcing a rebuild
     if not force_rebuild and _service_catalog is not None:
         print("Using pre-built service catalog", file=sys.stderr)
         return _service_catalog
-    
+
     # Build the catalog (only happens once, or when force_rebuild=True)
     print("Building service catalog (this happens once at startup or first use)...", file=sys.stderr)
     start_time = time.time()
     services_json = await enumerate_apps(api, token, user_id)
     api_time = time.time() - start_time
     print(f"API call took {api_time:.2f} seconds", file=sys.stderr)
-    
+
     services_data = json.loads(services_json) if isinstance(services_json, str) else services_json
-    
+
     # Load service name mapping
     service_mapping = load_config_file('service_mapping.json')
     friendly_to_api = service_mapping['friendly_to_api']
     api_to_friendly = {v: k for k, v in friendly_to_api.items()}
-    
+
     # Extract service list
     if isinstance(services_data, list) and len(services_data) > 0:
         if isinstance(services_data[0], list):
@@ -116,7 +116,7 @@ async def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = N
             apps_list = services_data
     else:
         apps_list = []
-    
+
     # Build catalog
     catalog = {
         "services": [],
@@ -125,33 +125,33 @@ async def build_service_catalog(api: JsonRpcCaller, token: str, user_id: str = N
             "api_to_friendly": api_to_friendly
         }
     }
-    
+
     for app in apps_list:
         if not isinstance(app, dict) or 'id' not in app:
             continue
-            
+
         api_name = app['id']
         friendly_name = api_to_friendly.get(api_name)
-        
+
         if not friendly_name:
             continue
-        
+
         # Get service description from prompt file
         try:
             description = get_service_info(friendly_name)
         except Exception:
             description = f"Service: {friendly_name}"
-        
+
         catalog["services"].append({
             "friendly_name": friendly_name,
             "api_name": api_name,
             "description": description
         })
-    
+
     # Store the catalog for reuse
     _service_catalog = catalog
     print(f"Service catalog built with {len(catalog['services'])} services", file=sys.stderr)
-    
+
     return catalog
 
 
@@ -166,7 +166,7 @@ async def select_services_for_workflow(
 ) -> Dict[str, Any]:
     """
     STEP 1: Select which services are needed for the workflow.
-    
+
     Args:
         user_query: User's workflow description
         api: JsonRpcCaller instance
@@ -175,7 +175,7 @@ async def select_services_for_workflow(
         llm_client: LLM client instance
         session_id: Optional session ID for retrieving session facts
         workspace_items: Optional list of workspace items to include in the prompt
-        
+
     Returns:
         Dictionary with:
         - services: List of friendly service names
@@ -184,10 +184,10 @@ async def select_services_for_workflow(
     """
     try:
         print("STEP 1: Selecting services for workflow...", file=sys.stderr)
-        
+
         # Load service selection system prompt
         system_prompt = load_prompt_file('workflow_service_selection.txt')
-        
+
         # Get session facts if session_id is provided
         session_facts_text = ""
         if session_id:
@@ -202,32 +202,32 @@ async def select_services_for_workflow(
             except Exception as e:
                 print(f"Warning: Could not retrieve session facts: {e}", file=sys.stderr)
                 session_facts_text = ""
-        
+
         # Format workspace items if provided
         workspace_str = ""
         if workspace_items and isinstance(workspace_items, list) and len(workspace_items) > 0:
             print(f"STEP 1: Including {len(workspace_items)} workspace items", file=sys.stderr)
             workspace_str = f"\n\nWORKSPACE ITEMS (available for reference):\n{json.dumps(workspace_items, indent=2)}\n\nThese files are in the user's workspace and may be relevant to the query."
-        
+
         # Build simple user prompt with just the query
         user_prompt = f"""Select the appropriate BV-BRC services for this user request:
 
 USER QUERY: {user_query}
 {session_facts_text}{workspace_str}
 Return a JSON object with "services" array and "reasoning" string."""
-        
+
         # Make the LLM call
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        
+
         response = llm_client.chat_completion(messages)
         print(f"Service selection response: {response[:200]}...", file=sys.stderr)
-        
+
         # Parse the response
         response_text = response.strip()
-        
+
         # Remove markdown code blocks if present
         if response_text.startswith("```"):
             lines = response_text.split("\n")
@@ -235,20 +235,20 @@ Return a JSON object with "services" array and "reasoning" string."""
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]  # Remove last line
             response_text = "\n".join(lines)
-        
+
         selection = json.loads(response_text)
-        
+
         if "services" not in selection or not isinstance(selection["services"], list):
             return {
                 "error": "Invalid service selection format",
                 "raw_response": response
             }
-        
+
         print(f"Selected services: {selection['services']}", file=sys.stderr)
         print(f"Reasoning: {selection.get('reasoning', 'N/A')}", file=sys.stderr)
-        
+
         return selection
-        
+
     except json.JSONDecodeError as e:
         print(f"Failed to parse service selection as JSON: {e}", file=sys.stderr)
         return {
@@ -271,27 +271,27 @@ def inject_workspace_items_into_workflow(
 ) -> Dict[str, Any]:
     """
     Inject workspace_items into workflow steps by mapping them to appropriate file input parameters.
-    
+
     This function modifies the workflow manifest to include workspace file paths in step parameters.
     It intelligently maps workspace items to common file input parameters based on file types and
     service requirements.
-    
+
     Args:
         workflow_manifest: The generated workflow manifest
         workspace_items: List of workspace items with type, path, name properties
         user_id: User ID for path normalization
-        
+
     Returns:
         Modified workflow manifest with workspace_items injected into step parameters
     """
     if not workspace_items or not isinstance(workspace_items, list) or len(workspace_items) == 0:
         return workflow_manifest
-    
+
     print(f"Injecting {len(workspace_items)} workspace items into workflow steps...", file=sys.stderr)
-    
+
     # Create a copy to avoid modifying the original
     workflow = json.loads(json.dumps(workflow_manifest))
-    
+
     # Common file input parameter patterns by service type
     # Maps file extensions/types to likely parameter names
     file_type_to_params = {
@@ -317,7 +317,7 @@ def inject_workspace_items_into_workflow(
         'tsv': ['input_file', 'data_file', 'tsv_file'],
         'txt': ['input_file', 'data_file', 'text_file'],
     }
-    
+
     # Get file extension from path
     def get_file_extension(path: str) -> str:
         if not path:
@@ -326,7 +326,7 @@ def inject_workspace_items_into_workflow(
         if len(parts) > 1:
             return parts[-1].lower()
         return ''
-    
+
     # Normalize workspace path (ensure it starts with /user_id/)
     def normalize_workspace_path(path: str) -> str:
         if not path:
@@ -340,44 +340,44 @@ def inject_workspace_items_into_workflow(
             path = path.lstrip('/')
             return f"/{user_id}/{path}"
         return path
-    
+
     # Process each step in the workflow
     if 'steps' not in workflow or not isinstance(workflow['steps'], list):
         print("Warning: Workflow has no steps, skipping workspace_items injection", file=sys.stderr)
         return workflow
-    
+
     # Track which workspace items have been used
     used_items = set()
-    
+
     for step_idx, step in enumerate(workflow['steps']):
         if not isinstance(step, dict) or 'params' not in step:
             continue
-        
+
         step_name = step.get('step_name', f'step_{step_idx}')
         params = step.get('params', {})
         app = step.get('app', '')
-        
+
         print(f"Processing step {step_idx + 1}: {step_name} (app: {app})", file=sys.stderr)
-        
+
         # Find matching workspace items for this step
         for item_idx, item in enumerate(workspace_items):
             if item_idx in used_items:
                 continue
-            
+
             item_path = item.get('path', '')
             item_name = item.get('name', '')
             item_type = item.get('type', '')
-            
+
             if not item_path:
                 continue
-            
+
             # Normalize the path
             normalized_path = normalize_workspace_path(item_path)
             file_ext = get_file_extension(item_path)
-            
+
             # Get potential parameter names for this file type
             potential_params = file_type_to_params.get(file_ext, ['input_file'])
-            
+
             # Try to find a matching parameter in the step
             # Priority: prefer parameters that match the file type, but override any existing values
             matched_param = None
@@ -390,28 +390,28 @@ def inject_workspace_items_into_workflow(
                     # Parameter doesn't exist, we can add it
                     matched_param = param_name
                     break
-            
+
             # If we found a match, inject the workspace item
             if matched_param:
                 params[matched_param] = normalized_path
                 used_items.add(item_idx)
                 print(f"  -> Injected workspace item '{item_name}' into parameter '{matched_param}': {normalized_path}", file=sys.stderr)
                 break  # Use one workspace item per step for now
-        
+
         # If this step didn't get a workspace item but has file parameters that need filling,
         # try to inject the first unused workspace item as a generic input_file
         step_has_file_params = any(
-            param in params for param in 
+            param in params for param in
             ['input_file', 'reads_file', 'genome_file', 'query_file', 'reference_file', 'annotation_file']
         )
-        
+
         # Check if this step's input_file (or similar) is empty and we have unused workspace items
         needs_file_input = (
-            step_has_file_params and 
-            ('input_file' not in params or not params.get('input_file') or 
+            step_has_file_params and
+            ('input_file' not in params or not params.get('input_file') or
              params.get('input_file') in ['', None, '${params.input_file}', 'TBD'])
         )
-        
+
         if needs_file_input:
             # Find first unused workspace item
             for item_idx, item in enumerate(workspace_items):
@@ -424,7 +424,7 @@ def inject_workspace_items_into_workflow(
                         used_items.add(item_idx)
                         print(f"  -> Injected workspace item '{item.get('name', '')}' as fallback input_file: {normalized_path}", file=sys.stderr)
                         break
-    
+
     print(f"Injected {len(used_items)} workspace items into workflow", file=sys.stderr)
     return workflow
 
@@ -443,7 +443,7 @@ async def generate_workflow_with_services(
 ) -> Dict[str, Any]:
     """
     STEP 2: Generate workflow manifest with detailed parameters for selected services.
-    
+
     Args:
         user_query: User's workflow description
         selected_services: List of friendly service names (from step 1)
@@ -455,25 +455,25 @@ async def generate_workflow_with_services(
         previous_workflow: Optional previous workflow JSON for fixing errors
         session_id: Optional session ID for retrieving session facts
         workspace_items: Optional list of workspace items to include in the prompt
-        
+
     Returns:
         Dict containing workflow_json and prompt_payload, or error details
     """
     try:
         print(f"STEP 2: Generating workflow for services: {selected_services}", file=sys.stderr)
-        
+
         # Get service catalog
         catalog = await build_service_catalog(api, token, user_id, force_rebuild=False)
-        
+
         # Load configuration files
         output_patterns = load_config_file('service_outputs.json')
         required_params_config = load_config_file('service_required_params.json')
-        
+
         # Add job_output_path field to every service output
         for service_name, service_outputs in output_patterns.items():
             if isinstance(service_outputs, dict):
                 service_outputs['job_output_path'] = "${params.output_path}/.${params.output_file}"
-        
+
         # Get DETAILED specifications for ONLY the selected services
         selected_service_specs = []
         for service in catalog['services']:
@@ -483,7 +483,7 @@ async def generate_workflow_with_services(
                     "api_name": service['api_name'],
                     "description": service['description']
                 })
-        
+
         # Get output patterns for ONLY the selected services
         selected_output_patterns = {}
         friendly_to_api = catalog.get('mapping', {}).get('friendly_to_api', {})
@@ -502,7 +502,7 @@ async def generate_workflow_with_services(
             )
             if required_params:
                 selected_required_params[service_name] = required_params
-        
+
         # Get session facts if session_id is provided
         session_facts_text = ""
         if session_id:
@@ -517,21 +517,21 @@ async def generate_workflow_with_services(
             except Exception as e:
                 print(f"Warning: Could not retrieve session facts: {e}", file=sys.stderr)
                 session_facts_text = ""
-        
+
         # Format workspace items if provided
         workspace_str = ""
         if workspace_items and isinstance(workspace_items, list) and len(workspace_items) > 0:
             print(f"STEP 2: Including {len(workspace_items)} workspace items", file=sys.stderr)
             workspace_str = f"\n\nWORKSPACE ITEMS (available for reference):\n{json.dumps(workspace_items, indent=2)}\n\nThese files are in the user's workspace and may be relevant to the query."
-        
+
         # Load parameter generation system prompt
         system_prompt = load_prompt_file('workflow_parameter_generation.txt')
-        
+
         # Build focused user prompt with ONLY selected service details
         session_context = ""
         if session_facts_text:
             session_context = f"\n\nSESSION CONTEXT:\nThe following session facts provide contextual information from previous user interactions. Use this knowledge base to enhance your understanding and populate workflow parameters appropriately.\n{session_facts_text}"
-        
+
         user_prompt = f"""Generate a complete workflow manifest for the following user request using THESE SPECIFIC SERVICES:
 
 USER QUERY: {user_query}
@@ -571,22 +571,22 @@ PREVIOUS WORKFLOW (fix only what is needed to address validation errors):
                 f"LLM parameter generation prompt payload:\n{json.dumps(prompt_payload, indent=2)}",
                 file=sys.stderr
             )
-        
+
         # Make the LLM call
         print("Generating workflow parameters...", file=sys.stderr)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        
+
         llm_start = time.time()
         response = llm_client.chat_completion(messages)
         llm_time = time.time() - llm_start
         print(f"Parameter generation completed in {llm_time:.2f} seconds", file=sys.stderr)
-        
+
         # Parse the response
         response_text = response.strip()
-        
+
         # Remove markdown code blocks if present
         if response_text.startswith("```"):
             lines = response_text.split("\n")
@@ -594,10 +594,10 @@ PREVIOUS WORKFLOW (fix only what is needed to address validation errors):
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
             response_text = "\n".join(lines)
-        
+
         # Parse JSON
         workflow_manifest = json.loads(response_text)
-        
+
         # Inject workspace_items into workflow steps if provided
         if workspace_items:
             workflow_manifest = inject_workspace_items_into_workflow(
@@ -605,7 +605,7 @@ PREVIOUS WORKFLOW (fix only what is needed to address validation errors):
                 workspace_items,
                 user_id
             )
-        
+
         # Update workspace_output_folder with actual user_id
         if 'base_context' in workflow_manifest:
             if 'workspace_output_folder' in workflow_manifest['base_context']:
@@ -621,12 +621,12 @@ PREVIOUS WORKFLOW (fix only what is needed to address validation errors):
                 "base_url": "https://www.bv-brc.org",
                 "workspace_output_folder": f"/{user_id}/home/WorkspaceOutputFolder"
             }
-        
+
         return {
             "workflow_json": workflow_manifest,
             "prompt_payload": prompt_payload
         }
-        
+
     except json.JSONDecodeError as e:
         print(f"Failed to parse workflow as JSON: {e}", file=sys.stderr)
         return {
@@ -659,10 +659,10 @@ async def generate_workflow_manifest_internal(
 ) -> Dict[str, Any]:
     """
     Generate a workflow manifest using TWO-STEP LLM-based planning.
-    
+
     Step 1: Select appropriate services
     Step 2: Generate detailed parameters for selected services
-    
+
     Args:
         user_query: User's workflow description
         api: JsonRpcCaller instance
@@ -673,7 +673,7 @@ async def generate_workflow_manifest_internal(
         previous_workflow: Optional previous workflow JSON for fixing errors
         session_id: Optional session ID for retrieving session facts
         workspace_items: Optional list of workspace items to include in prompts
-        
+
     Returns:
         Dict containing workflow_json and prompt_payload, or error details
     """
@@ -688,7 +688,7 @@ async def generate_workflow_manifest_internal(
             session_id=session_id,
             workspace_items=workspace_items
         )
-        
+
         # Check if selection failed
         if "error" in selection_result:
             return json.dumps({
@@ -696,14 +696,14 @@ async def generate_workflow_manifest_internal(
                 "details": selection_result.get("error"),
                 "hint": "Failed to determine which services are needed"
             }, indent=2)
-        
+
         selected_services = selection_result.get("services", [])
         if not selected_services:
             return json.dumps({
                 "error": "No services selected",
                 "hint": "Could not identify appropriate services for the query"
             }, indent=2)
-        
+
         # STEP 2: Generate workflow with detailed parameters
         workflow_result = await generate_workflow_with_services(
             user_query=user_query,
@@ -717,9 +717,9 @@ async def generate_workflow_manifest_internal(
             session_id=session_id,
             workspace_items=workspace_items
         )
-        
+
         return workflow_result
-        
+
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
@@ -733,13 +733,13 @@ async def generate_workflow_manifest_internal(
 def validate_workflow_structure(workflow_json: Dict[str, Any]) -> tuple[bool, Optional[str]]:
     """
     Perform basic structural validation of workflow JSON before submission.
-    
+
     This only checks for basic required fields. Complex validation (circular dependencies,
     DAG structure, parameter validation, etc.) is handled by the workflow engine itself.
-    
+
     Args:
         workflow_json: The workflow manifest to validate
-        
+
     Returns:
         Tuple of (is_valid, error_message)
         - (True, None) if basic structure is valid
@@ -751,30 +751,69 @@ def validate_workflow_structure(workflow_json: Dict[str, Any]) -> tuple[bool, Op
         for field in required_fields:
             if field not in workflow_json:
                 return False, f"Missing required field: {field}"
-        
+
         # Check steps is a non-empty list
         steps = workflow_json.get('steps', [])
         if not isinstance(steps, list):
             return False, "steps must be a list"
         if len(steps) == 0:
             return False, "Workflow must contain at least one step"
-        
+
         # Basic step structure check
         for i, step in enumerate(steps):
             if not isinstance(step, dict):
                 return False, f"Step {i} is not a dictionary"
-            
+
             # Check required step fields
             step_required = ['step_name', 'app', 'params']
             for field in step_required:
                 if field not in step:
                     return False, f"Step {i} missing required field: {field}"
-        
+
         # All basic checks passed - let workflow engine handle complex validation
         return True, None
-        
+
     except Exception as e:
         return False, f"Validation error: {str(e)}"
+
+
+def build_workflow_description(workflow_json: Dict[str, Any]) -> str:
+    """
+    Build a deterministic plain-text description from workflow steps.
+
+    This summary is intentionally minimal so it can be regenerated easily
+    after users edit planned steps.
+    """
+    steps = workflow_json.get('steps', [])
+    if not isinstance(steps, list) or len(steps) == 0:
+        return "Planned workflow with no steps."
+
+    step_labels: List[str] = []
+    for idx, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+
+        raw_label = step.get('step_name') or step.get('app') or f"step {idx + 1}"
+        if not isinstance(raw_label, str):
+            raw_label = str(raw_label)
+
+        label = re.sub(r'[_\-]+', ' ', raw_label).strip()
+        label = re.sub(r'\s+', ' ', label)
+        step_labels.append(label)
+
+    if not step_labels:
+        return "Planned workflow with no steps."
+
+    step_count = len(step_labels)
+    if step_count == 1:
+        return f"Planned workflow with 1 step: {step_labels[0]}."
+
+    preview_count = min(3, step_count)
+    listed_steps = ", ".join(step_labels[:preview_count])
+    if step_count > preview_count:
+        return f"Planned workflow with {step_count} steps: {listed_steps}, plus {step_count - preview_count} more."
+
+    return f"Planned workflow with {step_count} steps: {listed_steps}."
 
 
 def prepare_workflow_for_engine_validation(workflow_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -915,9 +954,9 @@ async def create_and_execute_workflow_internal(
 ) -> Dict[str, Any]:
     """
     Generate a workflow from natural language, validate it, and optionally submit it for execution.
-    
+
     This is the complete end-to-end workflow creation and submission function.
-    
+
     Args:
         user_query: User's workflow description
         api: JsonRpcCaller instance
@@ -928,13 +967,13 @@ async def create_and_execute_workflow_internal(
         workflow_engine_config: Workflow engine configuration dict (optional)
         session_id: Optional session ID for retrieving session facts
         workspace_items: Optional list of workspace items to include in workflow planning prompts
-        
+
     Returns:
         Dictionary with workflow_id, status, and workflow_json if successful,
         or error information if any stage fails
     """
     from common.workflow_engine_client import WorkflowEngineClient, WorkflowEngineError
-    
+
     # Stage 1: Generate workflow
     print("Stage 1: Generating workflow manifest...", file=sys.stderr)
     workflow_json = None
@@ -956,7 +995,7 @@ async def create_and_execute_workflow_internal(
                 session_id=session_id,
                 workspace_items=workspace_items
             )
-            
+
             # Check if generation returned an error
             if "error" in workflow_result:
                 return {
@@ -967,10 +1006,10 @@ async def create_and_execute_workflow_internal(
                     "prompt_payload": workflow_result.get("prompt_payload"),
                     "source": "bvbrc-service"
                 }
-            
+
             workflow_json = workflow_result.get("workflow_json")
             prompt_payload = workflow_result.get("prompt_payload")
-            
+
             if not workflow_json:
                 return {
                     "error": "Failed to generate workflow JSON",
@@ -979,9 +1018,9 @@ async def create_and_execute_workflow_internal(
                     "prompt_payload": prompt_payload,
                     "source": "bvbrc-service"
                 }
-            
+
             print("Stage 1: Workflow generated successfully", file=sys.stderr)
-            
+
         except Exception as e:
             import traceback
             return {
@@ -991,11 +1030,11 @@ async def create_and_execute_workflow_internal(
                 "traceback": traceback.format_exc(),
                 "source": "bvbrc-service"
             }
-    
+
         # Stage 2: Basic validation (complex validation happens in workflow engine)
         print("Stage 2: Validating basic workflow structure...", file=sys.stderr)
         is_valid, error_message = validate_workflow_structure(workflow_json)
-        
+
         if not is_valid:
             return {
                 "error": error_message,
@@ -1006,9 +1045,9 @@ async def create_and_execute_workflow_internal(
                 "prompt_payload": prompt_payload,
                 "source": "bvbrc-service"
             }
-        
+
         print("Stage 2: Basic validation passed (detailed validation will occur in workflow engine)", file=sys.stderr)
-        
+
         # If auto_execute is False, return a fully planned/validated workflow JSON.
         # Prefer workflow-engine validation when enabled so we reuse the same
         # resolver/validator/defaulting pipeline as real submission.
@@ -1027,9 +1066,11 @@ async def create_and_execute_workflow_internal(
                         validation_result = await client.validate_workflow(workflow_for_validation, token)
 
                         validated_workflow_json = validation_result.get('workflow_json', workflow_for_validation)
+                        workflow_description = build_workflow_description(validated_workflow_json)
                         print("Stage 2b: Workflow engine validation successful", file=sys.stderr)
                         return {
                             "workflow_json": validated_workflow_json,
+                            "workflow_description": workflow_description,
                             "message": "Workflow manifest generated and validated by workflow engine (not submitted for execution)",
                             "ready_for_submission": True,
                             "validation": {
@@ -1063,11 +1104,13 @@ async def create_and_execute_workflow_internal(
 
             print("auto_execute=False, returning locally validated workflow JSON", file=sys.stderr)
             locally_resolved_workflow = resolve_workflow_variables_locally(workflow_json)
+            workflow_description = build_workflow_description(locally_resolved_workflow)
             warnings = []
             if engine_validation_warning:
                 warnings.append(engine_validation_warning)
             return {
                 "workflow_json": locally_resolved_workflow,
+                "workflow_description": workflow_description,
                 "message": "Workflow manifest generated and locally resolved/validated (not submitted for execution)",
                 "ready_for_submission": True,
                 "validation": {
@@ -1079,7 +1122,7 @@ async def create_and_execute_workflow_internal(
                 "prompt_payload": prompt_payload,
                 "source": "bvbrc-service"
             }
-    
+
         # Check if workflow engine is enabled
         if not workflow_engine_config or not workflow_engine_config.get('enabled', False):
             print("Workflow engine is disabled, returning workflow JSON only", file=sys.stderr)
@@ -1090,15 +1133,15 @@ async def create_and_execute_workflow_internal(
                 "hint": "Enable workflow_engine in config.json to submit workflows for execution",
                 "source": "bvbrc-service"
             }
-        
+
         # Stage 3: Submit to workflow engine
         print("Stage 3: Submitting workflow to execution engine...", file=sys.stderr)
         try:
             engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
             engine_timeout = workflow_engine_config.get('timeout', 30)
-            
+
             client = WorkflowEngineClient(base_url=engine_url, timeout=engine_timeout)
-            
+
             # First check if engine is healthy
             is_healthy = await client.health_check()
             if not is_healthy:
@@ -1112,27 +1155,27 @@ async def create_and_execute_workflow_internal(
                     "prompt_payload": prompt_payload,
                     "source": "bvbrc-service"
                 }
-            
+
             # Clean the workflow before submission - remove any fields that workflow engine assigns
             # The workflow engine assigns workflow_id and step_ids, so we must remove them if present
             workflow_for_submission = prepare_workflow_for_engine_validation(workflow_json)
-            
+
             # Submit the workflow
             result = await client.submit_workflow(workflow_for_submission, token)
-            
+
             print(f"Stage 3: Workflow submitted successfully: {result.get('workflow_id')}", file=sys.stderr)
-            
+
             # Update the workflow_json with the real workflow_id from the engine
             # This ensures the returned workflow_json has the actual ID, not the placeholder
             updated_workflow_json = workflow_json.copy()
             updated_workflow_json['workflow_id'] = result.get('workflow_id')
-            
+
             # Also update status and timestamps if available
             updated_workflow_json['status'] = result.get('status', 'pending')
             updated_workflow_json['submitted_at'] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            
+
             print(f"Updated workflow_json with real workflow_id: {result.get('workflow_id')}", file=sys.stderr)
-            
+
             # Return success response
             return {
                 "workflow_id": result.get('workflow_id'),
@@ -1144,7 +1187,7 @@ async def create_and_execute_workflow_internal(
                 "prompt_payload": prompt_payload,
                 "source": "bvbrc-service"
             }
-            
+
         except WorkflowEngineError as e:
             print(f"Workflow engine error: {e}", file=sys.stderr)
             if e.error_type == "VALIDATION_FAILED" and attempt < max_attempts - 1:
