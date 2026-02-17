@@ -69,7 +69,7 @@ Return a JSON object with this EXACT structure:
 3. **base_context.workspace_output_folder**: Always use `"/USERNAME/home/WorkspaceOutputFolder"`
 4. **step_id**: Always use `"<scheduler_generated_id>"`
 5. **step_name**: Unique descriptive name, lowercase with underscores (e.g., "assemble_genome", "annotate_contigs")
-6. **app**: Use the API service name (e.g., "ComprehensiveGenomeAnalysis", not "comprehensive_genome_analysis")
+6. **app**: **CRITICAL** - Use the EXACT `api_name` value from the DETAILED SERVICE SPECIFICATIONS section
 7. **depends_on**: Array of step_name values (use step_name, not step_id). Empty array `[]` if no dependencies.
 8. **outputs**: Use the exact output patterns provided in the SERVICE OUTPUT PATTERNS section
 
@@ -109,6 +109,20 @@ Return a JSON object with this EXACT structure:
 ```
 
 **Note**: This is a generic structure example. For service-specific complete workflow examples, refer to the detailed service specifications provided in the user prompt.
+
+### Service Name Mapping Example
+
+Common mappings you must follow:
+- bacterial_genome_tree → CodonTree
+- genome_assembly → GenomeAssembly2
+- comprehensive_genome_analysis → ComprehensiveGenomeAnalysis
+- blast → Homology
+- whole_genome_snp → WholeGenomeSNPAnalysis
+- core_genome_mlst → CoreGenomeMLST
+- gene_tree → GeneTree
+- taxonomic_classification → TaxonomicClassification
+
+**CRITICAL**: Always look at the api_name field in DETAILED SERVICE SPECIFICATIONS - never guess or invent the API name!
 
 ## Instructions
 
