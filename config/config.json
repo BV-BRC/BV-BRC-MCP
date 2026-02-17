@@ -30,6 +30,15 @@
         "timeout": 30,
         "enabled": true
     },
+    "file_utilities": {
+        "session_base_path": "/tmp/copilot/sessions",
+        "max_file_size_mb": 100,
+        "default_limit": 1000,
+        "max_limit": 10000,
+        "mongo_url": "mongodb://140.221.78.16:27018/copilot",
+        "mongo_database": "copilot",
+        "mongo_collection": "session_files"
+    },
     "mongodb": {
         "url": "mongodb://140.221.78.16:27018/copilot",
         "database": "copilot",

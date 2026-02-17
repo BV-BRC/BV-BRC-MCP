@@ -77,6 +77,7 @@ class AppConfig:
             "similar_genome_finder_api_url",
             self.service_api_url  # Default to service_api_url if not specified
         )
+        self.file_utilities = config.get("file_utilities", {})
         
         # Authentication
         self.authentication_url = config.get(

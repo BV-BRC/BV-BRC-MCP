@@ -59,7 +59,7 @@ print("Registering service tools...", file=sys.stderr)
 register_service_tools(mcp, service_api, similar_genome_finder_api, token_provider)
 
 print("Registering workspace tools...", file=sys.stderr)
-register_workspace_tools(mcp, workspace_api, token_provider)
+register_workspace_tools(mcp, workspace_api, token_provider, config.file_utilities)
 
 # Add health check tool
 # @mcp.tool()

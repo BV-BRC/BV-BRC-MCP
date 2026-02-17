@@ -2,15 +2,22 @@
 from fastmcp import FastMCP
 from functions.workspace_functions import (
     workspace_get_file_metadata, workspace_download_file,
-    workspace_upload, workspace_create_genome_group,
+    workspace_upload as workspace_upload_func, workspace_create_genome_group,
     workspace_create_feature_group, workspace_get_genome_group_ids, workspace_get_feature_group_ids,
-    workspace_preview_file, workspace_browse
+    workspace_preview_file, workspace_read_range, workspace_browse
 )
 from common.json_rpc import JsonRpcCaller
 from common.token_provider import TokenProvider
 import json
 from typing import List, Optional
 import sys
+import os
+import csv
+import base64
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+
+_file_registry_client: Optional[MongoClient] = None
 
 def extract_userid_from_token(token: str = None) -> str:
     """
@@ -106,7 +113,141 @@ def resolve_relative_path(path: str, user_id: str) -> str:
         # Treat as relative to home directory
         return f"{home_path}/{path}"
 
-def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: TokenProvider):
+def _get_file_registry_client(file_utilities_config: dict) -> Optional[MongoClient]:
+    """Create or reuse a MongoDB client for session file lookups."""
+    global _file_registry_client
+    mongo_url = (file_utilities_config or {}).get("mongo_url")
+    if not mongo_url:
+        return None
+    if _file_registry_client is None:
+        _file_registry_client = MongoClient(mongo_url, serverSelectionTimeoutMS=5000)
+    return _file_registry_client
+
+def _get_registered_file_path(session_id: str, file_id: str, file_utilities_config: dict) -> Optional[str]:
+    """Resolve filePath from configured session_files registry when available."""
+    client = _get_file_registry_client(file_utilities_config)
+    if client is None:
+        return None
+
+    db_name = file_utilities_config.get("mongo_database", "copilot")
+    collection_name = file_utilities_config.get("mongo_collection", "session_files")
+    collection = client[db_name][collection_name]
+    queries = [
+        {"session_id": session_id, "fileId": file_id},
+        {"sessionId": session_id, "fileId": file_id},
+        {"session_id": session_id, "file_id": file_id},
+    ]
+
+    try:
+        for query in queries:
+            record = collection.find_one(query)
+            if record and record.get("filePath"):
+                return record["filePath"]
+    except PyMongoError as exc:
+        print(f"Mongo file lookup failed: {exc}", file=sys.stderr)
+    return None
+
+def _resolve_local_file_path(session_id: str, file_id: str, file_utilities_config: Optional[dict]) -> str:
+    """Resolve local session file path using configured file_utilities settings."""
+    config = file_utilities_config or {}
+    base_path = config.get("session_base_path")
+    if not base_path:
+        raise ValueError("file_utilities.session_base_path must be configured")
+
+    registered_path = _get_registered_file_path(session_id, file_id, config)
+    if registered_path and os.path.exists(registered_path):
+        return registered_path
+
+    downloads_path = os.path.join(base_path, session_id, "downloads")
+
+    extensions = ["", ".json", ".csv", ".tsv", ".txt"]
+    for ext in extensions:
+        candidate = os.path.join(downloads_path, f"{file_id}{ext}")
+        if os.path.exists(candidate):
+            return candidate
+
+    return os.path.join(downloads_path, file_id)
+
+def _detect_local_file_type(file_path: str) -> str:
+    """Detect local file type for line-oriented reads."""
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".json":
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return "json_array"
+            if isinstance(data, dict):
+                return "json_object"
+        except Exception:
+            pass
+    if ext == ".csv":
+        return "csv"
+    if ext == ".tsv":
+        return "tsv"
+    return "text"
+
+def _read_local_file_lines(file_path: str, start: int, end: Optional[int], limit: int) -> dict:
+    """Read local file lines using Copilot tool semantics."""
+    limit = min(limit, 10000)
+    file_type = _detect_local_file_type(file_path)
+
+    if file_type in ("json_array", "json_object"):
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if file_type == "json_object":
+            data = [{"key": k, "value": v} for k, v in data.items()]
+        total_lines = len(data)
+        start_idx = max(0, start - 1)
+        end_idx = min(end if end else total_lines, total_lines)
+        end_idx = min(start_idx + limit, end_idx)
+        return {
+            "lines": data[start_idx:end_idx],
+            "startLine": start_idx + 1,
+            "endLine": end_idx,
+            "totalLines": total_lines,
+            "hasMore": end_idx < total_lines,
+            "source": "bvbrc-workspace"
+        }
+
+    if file_type in ("csv", "tsv"):
+        delimiter = "\t" if file_type == "tsv" else ","
+        with open(file_path, "r", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f, delimiter=delimiter))
+        total_lines = len(rows)
+        start_idx = max(0, start - 1)
+        end_idx = min(end if end else total_lines, total_lines)
+        end_idx = min(start_idx + limit, end_idx)
+        return {
+            "lines": rows[start_idx:end_idx],
+            "startLine": start_idx + 1,
+            "endLine": end_idx,
+            "totalLines": total_lines,
+            "hasMore": end_idx < total_lines,
+            "source": "bvbrc-workspace"
+        }
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        text_lines = f.readlines()
+    total_lines = len(text_lines)
+    start_idx = max(0, start - 1)
+    end_idx = min(end if end else total_lines, total_lines)
+    end_idx = min(start_idx + limit, end_idx)
+    return {
+        "lines": [line.rstrip("\n") for line in text_lines[start_idx:end_idx]],
+        "startLine": start_idx + 1,
+        "endLine": end_idx,
+        "totalLines": total_lines,
+        "hasMore": end_idx < total_lines,
+        "source": "bvbrc-workspace"
+    }
+
+def register_workspace_tools(
+    mcp: FastMCP,
+    api: JsonRpcCaller,
+    token_provider: TokenProvider,
+    file_utilities_config: Optional[dict] = None
+):
     """Register workspace tools with the FastMCP server"""
     
     @mcp.tool()
@@ -272,6 +413,145 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
         result = await workspace_preview_file(api, resolved_path, auth_token)
         return result
 
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def workspace_read_range_tool(
+        token: Optional[str] = None,
+        path: str = None,
+        start_byte: int = 0,
+        max_bytes: int = 8192
+    ) -> dict:
+        """Read a byte range from a workspace file.
+
+        Use this tool to page through large files safely by changing start_byte.
+
+        Args:
+            token: Authentication token (optional - will use default if not provided)
+            path: Path to the file to read (relative to user's home directory).
+            start_byte: Zero-based starting byte offset (default: 0).
+            max_bytes: Maximum bytes to read (default: 8192, max: 1048576).
+        """
+        auth_token = token_provider.get_token(token)
+        if not auth_token:
+            return {
+                "error": "No authentication token available",
+                "errorType": "AUTHENTICATION_ERROR",
+                "source": "bvbrc-workspace"
+            }
+
+        user_id = extract_userid_from_token(auth_token)
+        resolved_path = resolve_relative_path(path, user_id)
+
+        print(
+            f"Reading workspace file range from path: {resolved_path}, user_id: {user_id}, "
+            f"start_byte: {start_byte}, max_bytes: {max_bytes}"
+        )
+
+        return await workspace_read_range(
+            api=api,
+            path=resolved_path,
+            token=auth_token,
+            start_byte=start_byte,
+            max_bytes=max_bytes
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def preview_file(
+        session_id: str,
+        file_id: str,
+        start_byte: int = 0,
+        max_bytes: int = 8192
+    ) -> dict:
+        """Preview a byte range from a local Copilot session file."""
+        print(f"Getting preview of local file {file_id} in session {session_id}...", file=sys.stderr)
+        try:
+            if not session_id or not file_id:
+                return {
+                    "error": True,
+                    "errorType": "INVALID_PARAMETERS",
+                    "message": "Missing required parameters: session_id and file_id",
+                    "source": "bvbrc-workspace"
+                }
+
+            if start_byte < 0:
+                return {
+                    "error": True,
+                    "errorType": "INVALID_PARAMETERS",
+                    "message": "start_byte must be >= 0",
+                    "source": "bvbrc-workspace"
+                }
+
+            if max_bytes <= 0:
+                return {
+                    "error": True,
+                    "errorType": "INVALID_PARAMETERS",
+                    "message": "max_bytes must be > 0",
+                    "source": "bvbrc-workspace"
+                }
+
+            max_bytes = min(max_bytes, 1024 * 1024)
+            file_path = _resolve_local_file_path(session_id, file_id, file_utilities_config)
+
+            with open(file_path, "rb") as f:
+                f.seek(start_byte)
+                chunk = f.read(max_bytes)
+
+            try:
+                return {"content": chunk.decode("utf-8"), "source": "bvbrc-workspace"}
+            except UnicodeDecodeError:
+                base64_content = base64.b64encode(chunk).decode("utf-8")
+                return {
+                    "content": f"<base64_encoded_data>{base64_content}</base64_encoded_data>",
+                    "source": "bvbrc-workspace"
+                }
+        except Exception as e:
+            return {
+                "error": True,
+                "errorType": "PROCESSING_ERROR",
+                "message": f"Error getting file preview: {str(e)}",
+                "source": "bvbrc-workspace"
+            }
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def read_file_lines(
+        session_id: str,
+        file_id: str,
+        start: int = 1,
+        end: Optional[int] = None,
+        limit: int = 1000
+    ) -> dict:
+        """Read line ranges from a local Copilot session file."""
+        print(
+            f"Reading lines from local file {file_id} in session {session_id}: start={start}, end={end}, limit={limit}",
+            file=sys.stderr
+        )
+        try:
+            if not session_id or not file_id:
+                return {
+                    "error": True,
+                    "errorType": "INVALID_PARAMETERS",
+                    "message": "Missing required parameters: session_id and file_id",
+                    "source": "bvbrc-workspace"
+                }
+
+            file_path = _resolve_local_file_path(session_id, file_id, file_utilities_config)
+            if not os.path.exists(file_path):
+                return {
+                    "error": True,
+                    "errorType": "FILE_NOT_FOUND",
+                    "message": f"File {file_id} not found",
+                    "details": {"fileId": file_id, "session_id": session_id},
+                    "source": "bvbrc-workspace"
+                }
+
+            return _read_local_file_lines(file_path, start, end, limit)
+        except Exception as e:
+            return {
+                "error": True,
+                "errorType": "PROCESSING_ERROR",
+                "message": f"Error reading file lines: {str(e)}",
+                "source": "bvbrc-workspace"
+            }
+
     @mcp.tool()
     async def workspace_upload(token: Optional[str] = None, filename: str = None, upload_dir: str = None) -> dict:
         """Create an upload URL for a file in the workspace.
@@ -308,7 +588,7 @@ def register_workspace_tools(mcp: FastMCP, api: JsonRpcCaller, token_provider: T
 
         print(f"Uploading file: {filename}, user_id: {user_id}, upload_dir: {upload_dir}")
 
-        result = await workspace_upload(api, filename, upload_dir, auth_token)
+        result = await workspace_upload_func(api, filename, upload_dir, auth_token)
         return result
 
     @mcp.tool()

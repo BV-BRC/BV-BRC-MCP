@@ -30,6 +30,7 @@ base_url = config.get("base_url", "https://www.bv-brc.org/api-bulk")
 workspace_api_url = config.get("workspace_url", "https://p3.theseed.org/services/Workspace")
 service_api_url = config.get("service_api_url", "https://p3.theseed.org/services/app_service")
 similar_genome_finder_api_url = config.get("similar_genome_finder_api_url", service_api_url)
+file_utilities_config = config.get("file_utilities", {})
 
 # Initialize token provider for STDIO mode
 # In STDIO mode, token comes from KB_AUTH_TOKEN environment variable
@@ -51,7 +52,7 @@ print("Registering service tools...", file=sys.stderr)
 register_service_tools(mcp, service_api, similar_genome_finder_api, token_provider)
 
 print("Registering workspace tools...", file=sys.stderr)
-register_workspace_tools(mcp, workspace_api, token_provider)
+register_workspace_tools(mcp, workspace_api, token_provider, file_utilities_config)
 
 # Add health check tool
 @mcp.tool()

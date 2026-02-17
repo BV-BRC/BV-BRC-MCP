@@ -708,6 +708,73 @@ async def workspace_preview_file(api: JsonRpcCaller, path: str, token: str) -> d
             "source": "bvbrc-workspace"
         }
 
+async def workspace_read_range(api: JsonRpcCaller, path: str, token: str, start_byte: int = 0, max_bytes: int = 8192) -> dict:
+    """
+    Read a specific byte range from a workspace file using HTTP Range headers.
+
+    Args:
+        api: JsonRpcCaller instance configured with workspace URL and token
+        path: Path to the file
+        token: Authentication token for API calls
+        start_byte: Zero-based byte offset to start reading from
+        max_bytes: Maximum number of bytes to read (capped at 1 MiB)
+
+    Returns:
+        Dictionary containing ranged file data (text for text files, base64 for binary files)
+    """
+    if start_byte < 0:
+        return {
+            "error": "start_byte must be >= 0",
+            "errorType": "INVALID_PARAMETERS",
+            "source": "bvbrc-workspace"
+        }
+
+    if max_bytes <= 0:
+        return {
+            "error": "max_bytes must be > 0",
+            "errorType": "INVALID_PARAMETERS",
+            "source": "bvbrc-workspace"
+        }
+
+    max_bytes = min(max_bytes, 1024 * 1024)
+    end_byte = start_byte + max_bytes - 1
+
+    try:
+        download_url_obj = await _get_download_url(api, path, token)
+        download_url = download_url_obj[0][0]
+
+        headers = {
+            "Authorization": token,
+            "Range": f"bytes={start_byte}-{end_byte}"
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(download_url, headers=headers)
+            if response.status_code not in (200, 206):
+                response.raise_for_status()
+            content = response.content
+
+            try:
+                data = content.decode("utf-8")
+            except UnicodeDecodeError:
+                base64_content = base64.b64encode(content).decode("utf-8")
+                data = f"<base64_encoded_data>{base64_content}</base64_encoded_data>"
+
+            return {
+                "data": data,
+                "start_byte": start_byte,
+                "bytes_read": len(content),
+                "requested_max_bytes": max_bytes,
+                "next_start_byte": start_byte + len(content),
+                "source": "bvbrc-workspace"
+            }
+    except Exception as e:
+        return {
+            "error": f"Error reading byte range: {str(e)}",
+            "errorType": "API_ERROR",
+            "source": "bvbrc-workspace"
+        }
+
 async def _get_download_url(api: JsonRpcCaller, path: str, token: str) -> str:
     """
     Get the download URL of a file from the workspace using the JSON-RPC API.
