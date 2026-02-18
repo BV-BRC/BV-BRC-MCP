@@ -36,6 +36,46 @@ def _build_grid_payload(
         "items": items or []
     }
 
+def _fix_duplicated_user_id_in_path(path: str, user_id: str) -> str:
+    """
+    Detect and fix paths with duplicated user_id (e.g., /user@domain.com/user@domain.com/home -> /user@domain.com/home).
+    
+    Args:
+        path: Path that may have duplicated user_id
+        user_id: User ID to check for duplication
+    
+    Returns:
+        Path with duplicated user_id removed
+    """
+    if not path or not user_id:
+        return path
+    
+    # Check if path starts with /{user_id}/{user_id}/ (duplicated user_id)
+    duplicated_prefix = f"/{user_id}/{user_id}/"
+    if path.startswith(duplicated_prefix):
+        # Remove the duplicate user_id segment
+        fixed_path = f"/{user_id}/" + path[len(duplicated_prefix):]
+        print(f"Fixed duplicated user_id in path: {path} -> {fixed_path}", file=sys.stderr)
+        return fixed_path
+    
+    return path
+
+def _fix_duplicated_user_id_in_paths(paths: List[str], user_id: str) -> List[str]:
+    """
+    Fix duplicated user_id in a list of paths.
+    
+    Args:
+        paths: List of paths that may have duplicated user_id
+        user_id: User ID to check for duplication
+    
+    Returns:
+        List of paths with duplicated user_id removed
+    """
+    if not paths or not user_id:
+        return paths
+    
+    return [_fix_duplicated_user_id_in_path(path, user_id) for path in paths]
+
 async def workspace_ls(
     api: JsonRpcCaller,
     paths: List[str],
@@ -62,6 +102,11 @@ async def workspace_ls(
         List of workspace items
     """
     try:
+        # Fix any duplicated user_id in paths (defensive measure)
+        user_id = _get_user_id_from_token(token)
+        if user_id:
+            paths = _fix_duplicated_user_id_in_paths(paths, user_id)
+        
         # Build API call parameters
         # Enable recursive search when file_types is provided to search subdirectories
         if file_types:
@@ -174,6 +219,11 @@ async def workspace_search(
                 "source": "bvbrc-workspace"
             }
         paths = [f"/{user_id}/home"]
+    else:
+        # Fix any duplicated user_id in paths (defensive measure)
+        user_id = _get_user_id_from_token(token)
+        if user_id:
+            paths = _fix_duplicated_user_id_in_paths(paths, user_id)
 
     # Build query conditions based on what's provided
     query_conditions = {}

@@ -94,17 +94,17 @@ class WorkflowEngineClient:
 
         return cleaned
 
-    async def submit_workflow(self, workflow_json: Dict[str, Any], auth_token: str) -> Dict[str, Any]:
+    async def submit_workflow(self, workflow_id: str, auth_token: str) -> Dict[str, Any]:
         """
-        Submit a workflow to the workflow engine for execution.
+        Submit a previously registered workflow to the workflow engine for execution.
 
         Args:
-            workflow_json: Complete workflow manifest dictionary
+            workflow_id: Existing workflow identifier
             auth_token: BV-BRC authentication token
 
         Returns:
             Dictionary with:
-            - workflow_id: The assigned workflow ID
+            - workflow_id: Submitted workflow ID
             - status: Initial status (typically "pending")
             - message: Confirmation message
 
@@ -118,14 +118,13 @@ class WorkflowEngineClient:
         }
 
         try:
-            sanitized_payload = self._sanitize_workflow_payload(workflow_json)
-            print(f"Submitting workflow to workflow engine: {url}", file=sys.stderr)
+            print(f"Submitting workflow_id {workflow_id} to workflow engine: {url}", file=sys.stderr)
 
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=sanitized_payload, headers=headers) as response:
+                async with session.post(url, json={"workflow_id": workflow_id}, headers=headers) as response:
                     response_text = await response.text()
 
-                    if response.status == 201:
+                    if response.status in (200, 201):
                         result = await response.json()
                         print(f"Workflow submitted successfully: {result.get('workflow_id')}", file=sys.stderr)
                         return result
@@ -137,7 +136,7 @@ class WorkflowEngineClient:
                         except:
                             error_msg = response_text
                         raise WorkflowEngineError(
-                            f"Workflow validation failed: {error_msg}",
+                            f"Workflow submission failed: {error_msg}",
                             error_type="VALIDATION_FAILED",
                             status_code=400
                         )
@@ -176,9 +175,84 @@ class WorkflowEngineClient:
                 error_type="TIMEOUT"
             ) from e
         except Exception as e:
-            print(f"Unexpected error submitting workflow: {e}", file=sys.stderr)
+            print(f"Unexpected error submitting workflow_id {workflow_id}: {e}", file=sys.stderr)
             raise WorkflowEngineError(
                 f"Unexpected error: {str(e)}",
+                error_type="UNKNOWN_ERROR"
+            ) from e
+
+    async def register_workflow(self, workflow_json: Dict[str, Any], auth_token: str) -> Dict[str, Any]:
+        """
+        Validate and register a workflow without submitting it for execution.
+
+        Args:
+            workflow_json: Complete workflow manifest dictionary
+            auth_token: BV-BRC authentication token
+
+        Returns:
+            Dictionary with workflow_id, status, workflow_name, and step_count
+        """
+        url = f"{self.base_url}/workflows/register"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": auth_token
+        }
+
+        try:
+            sanitized_payload = self._sanitize_workflow_payload(workflow_json)
+            print(f"Registering workflow in workflow engine: {url}", file=sys.stderr)
+
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.post(url, json=sanitized_payload, headers=headers) as response:
+                    response_text = await response.text()
+
+                    if response.status == 201:
+                        result = await response.json()
+                        print(f"Workflow registered successfully: {result.get('workflow_id')}", file=sys.stderr)
+                        return result
+                    elif response.status == 400:
+                        try:
+                            error_data = await response.json()
+                            error_msg = error_data.get('detail', response_text)
+                        except Exception:
+                            error_msg = response_text
+                        raise WorkflowEngineError(
+                            f"Workflow registration validation failed: {error_msg}",
+                            error_type="VALIDATION_FAILED",
+                            status_code=400
+                        )
+                    elif response.status == 500:
+                        try:
+                            error_data = await response.json()
+                            error_msg = error_data.get('detail', response_text)
+                        except Exception:
+                            error_msg = response_text
+                        raise WorkflowEngineError(
+                            f"Workflow engine internal error during registration: {error_msg}",
+                            error_type="ENGINE_ERROR",
+                            status_code=500
+                        )
+                    else:
+                        raise WorkflowEngineError(
+                            f"Unexpected response from workflow registration endpoint: {response.status} - {response_text}",
+                            error_type="UNKNOWN_ERROR",
+                            status_code=response.status
+                        )
+        except WorkflowEngineError:
+            raise
+        except aiohttp.ClientConnectorError as e:
+            raise WorkflowEngineError(
+                f"Cannot connect to workflow engine at {self.base_url}. Is it running?",
+                error_type="CONNECTION_FAILED"
+            ) from e
+        except asyncio.TimeoutError as e:
+            raise WorkflowEngineError(
+                f"Workflow registration request timed out after {self.timeout.total}s",
+                error_type="TIMEOUT"
+            ) from e
+        except Exception as e:
+            raise WorkflowEngineError(
+                f"Unexpected error registering workflow: {str(e)}",
                 error_type="UNKNOWN_ERROR"
             ) from e
 

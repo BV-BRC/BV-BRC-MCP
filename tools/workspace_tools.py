@@ -72,12 +72,20 @@ def resolve_relative_paths(paths: List[str], user_id: str) -> List[str]:
         if path.startswith('/workspace/'):
             path = path[len('/workspace'):]
         
-        # If path already starts with /, treat as absolute
-        if path.startswith('/'):
+        # Check if path already contains the user_id to prevent duplication
+        if path.startswith(f'/{user_id}/'):
+            # Path already has correct user_id prefix, return as-is
+            resolved_paths.append(path)
+        elif path.startswith('/'):
+            # Absolute path but doesn't start with user_id - could be another user's path or system path
+            # Return as-is (don't modify other users' paths)
             resolved_paths.append(path)
         elif path == 'home':
             # If path is just "home", return home_path directly to avoid /home/home
             resolved_paths.append(home_path)
+        elif path.startswith(f'{user_id}/'):
+            # Path starts with user_id but no leading / - add leading / and return
+            resolved_paths.append(f'/{path}')
         else:
             # Treat as relative to home directory
             resolved_paths.append(f"{home_path}/{path}")
@@ -104,12 +112,20 @@ def resolve_relative_path(path: str, user_id: str) -> str:
 
     home_path = get_user_home_path(user_id)
 
-    # If path already starts with /, treat as absolute
-    if path.startswith('/'):
+    # Check if path already contains the user_id to prevent duplication
+    if path.startswith(f'/{user_id}/'):
+        # Path already has correct user_id prefix, return as-is
+        return path
+    elif path.startswith('/'):
+        # Absolute path but doesn't start with user_id - could be another user's path or system path
+        # Return as-is (don't modify other users' paths)
         return path
     elif path == 'home':
         # If path is just "home", return home_path directly to avoid /home/home
         return home_path
+    elif path.startswith(f'{user_id}/'):
+        # Path starts with user_id but no leading / - add leading / and return
+        return f'/{path}'
     else:
         # Treat as relative to home directory
         return f"{home_path}/{path}"
