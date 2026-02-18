@@ -456,38 +456,20 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     "source": "bvbrc-service"
                 }
 
-            if not workflow_engine_config or not workflow_engine_config.get('enabled', False):
-                return {
-                    "error": "Workflow engine is disabled in configuration",
-                    "errorType": "ENGINE_UNAVAILABLE",
-                    "hint": "Enable workflow_engine in config.json to persist workflow plans",
-                    "source": "bvbrc-service"
-                }
-
-            engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
-            engine_timeout = workflow_engine_config.get('timeout', 30)
-            client = WorkflowEngineClient(base_url=engine_url, timeout=engine_timeout)
-
-            is_healthy = await client.health_check()
-            if not is_healthy:
-                return {
-                    "error": "Workflow engine is not available",
-                    "errorType": "ENGINE_UNAVAILABLE",
-                    "hint": f"Ensure workflow engine is running at {engine_url}",
-                    "source": "bvbrc-service"
-                }
-
-            planned = await client.plan_workflow(workflow_json, auth_token)
-            workflow_id = planned.get("workflow_id")
-            print(f"[DEBUG plan_workflow] Generated workflow_id: {workflow_id}", file=sys.stderr)
-            print(f"[DEBUG plan_workflow] Full planned response: {planned}", file=sys.stderr)
-            return {
-                "workflow_id": workflow_id,
-                "status": planned.get("status", "planned"),
-                "workflow_name": planned.get("workflow_name", workflow_json.get("workflow_name", "Workflow")),
-                "step_count": planned.get("step_count", len(workflow_json.get("steps", []) if isinstance(workflow_json.get("steps"), list) else [])),
+            # Return the workflow JSON directly with validation notes
+            # The workflow has defaults applied and validation has been run (non-blocking)
+            workflow_name = workflow_json.get("workflow_name", "Workflow")
+            step_count = len(workflow_json.get("steps", []))
+            
+            result = {
+                "workflow_id": "<not_persisted>",
+                "status": "planned",
+                "workflow_name": workflow_name,
+                "step_count": step_count,
+                "workflow_json": workflow_json,
                 "workflow_description": generated.get("workflow_description"),
-                "message": "Workflow planned and saved. Use submit_workflow(workflow_id=...) to execute.",
+                "ready_for_submission": generated.get("ready_for_submission", True),
+                "validation": generated.get("validation", {}),
                 "call": {
                     "tool": "plan_workflow",
                     "arguments_executed": {
@@ -499,6 +481,18 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 },
                 "source": "bvbrc-service"
             }
+            
+            # Include validation errors and notes if present
+            if "validation_errors" in generated:
+                result["validation_errors"] = generated["validation_errors"]
+                result["message"] = "Workflow planned but has validation errors. Review and fix before submission."
+            else:
+                result["message"] = "Workflow planned successfully with defaults applied. Use submit_workflow() with the workflow_json to execute."
+            
+            if "validation_notes" in generated:
+                result["validation_notes"] = generated["validation_notes"]
+                
+            return result
 
         except FileNotFoundError as e:
             return {

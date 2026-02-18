@@ -490,7 +490,7 @@ async def list_jobs(
 
         # Keep parity with frontend behavior.
         jobs = [job for job in jobs if isinstance(job, dict) and job.get("status") != "deleted"]
-
+        
         return {
             "items": jobs,
             "total": total,
