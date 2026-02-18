@@ -485,6 +485,15 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "step_count": planned.get("step_count", len(workflow_json.get("steps", []) if isinstance(workflow_json.get("steps"), list) else [])),
                 "workflow_description": generated.get("workflow_description"),
                 "message": "Workflow planned and saved. Use submit_workflow(workflow_id=...) to execute.",
+                "call": {
+                    "tool": "plan_workflow",
+                    "arguments_executed": {
+                        "user_query": user_query,
+                        "session_id": session_id,
+                        "workspace_items_count": len(workspace_items) if isinstance(workspace_items, list) else 0
+                    },
+                    "replayable": True
+                },
                 "source": "bvbrc-service"
             }
 
@@ -602,7 +611,6 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             # Check if workflow engine is enabled
             if not workflow_engine_config or not workflow_engine_config.get('enabled', False):
                 return {
-                    "workflow_json": workflow_json,
                     "error": "Workflow engine is disabled in configuration",
                     "errorType": "ENGINE_UNAVAILABLE",
                     "hint": "Enable workflow_engine in config.json to submit workflows for execution",
@@ -621,7 +629,6 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             if not is_healthy:
                 print("Workflow engine health check failed", file=sys.stderr)
                 return {
-                    "workflow_json": workflow_json,
                     "error": "Workflow engine is not available",
                     "errorType": "ENGINE_UNAVAILABLE",
                     "hint": f"Ensure workflow engine is running at {engine_url}",
@@ -638,6 +645,13 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     "submitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     "message": result.get('message', 'Workflow submitted for execution'),
                     "status_url": f"{engine_url}/workflows/{result.get('workflow_id', workflow_id)}/status",
+                    "call": {
+                        "tool": "submit_workflow",
+                        "arguments_executed": {
+                            "workflow_id": workflow_id
+                        },
+                        "replayable": True
+                    },
                     "source": "bvbrc-service"
                 }
 
@@ -673,6 +687,13 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 "submitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "message": result.get('message', 'Workflow submitted for execution'),
                 "status_url": f"{engine_url}/workflows/{result.get('workflow_id')}/status",
+                "call": {
+                    "tool": "submit_workflow",
+                    "arguments_executed": {
+                        "workflow_json": workflow_for_submission
+                    },
+                    "replayable": True
+                },
                 "source": "bvbrc-service"
             }
 
