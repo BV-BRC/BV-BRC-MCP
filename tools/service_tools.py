@@ -478,8 +478,11 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 }
 
             planned = await client.plan_workflow(workflow_json, auth_token)
+            workflow_id = planned.get("workflow_id")
+            print(f"[DEBUG plan_workflow] Generated workflow_id: {workflow_id}", file=sys.stderr)
+            print(f"[DEBUG plan_workflow] Full planned response: {planned}", file=sys.stderr)
             return {
-                "workflow_id": planned.get("workflow_id"),
+                "workflow_id": workflow_id,
                 "status": planned.get("status", "planned"),
                 "workflow_name": planned.get("workflow_name", workflow_json.get("workflow_name", "Workflow")),
                 "step_count": planned.get("step_count", len(workflow_json.get("steps", []) if isinstance(workflow_json.get("steps"), list) else [])),
