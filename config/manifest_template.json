@@ -184,8 +184,8 @@
       "description": "Browse workspace paths; optionally search recursively, list folders, or return file metadata"
     },
     {
-      "name": "workspace_get_file_metadata_tool",
-      "description": "Get the metadata of a file from the workspace"
+      "name": "get_file_metadata",
+      "description": "Get normalized file metadata from either workspace paths or local session files"
     },
     {
       "name": "workspace_download_file_tool",

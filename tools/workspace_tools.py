@@ -14,6 +14,7 @@ import sys
 import os
 import csv
 import base64
+import mimetypes
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
@@ -146,6 +147,123 @@ def _get_registered_file_path(session_id: str, file_id: str, file_utilities_conf
     except PyMongoError as exc:
         print(f"Mongo file lookup failed: {exc}", file=sys.stderr)
     return None
+
+def _get_registered_file_record(session_id: str, file_id: str, file_utilities_config: dict) -> Optional[dict]:
+    """Resolve full file registry record for a session file when available."""
+    client = _get_file_registry_client(file_utilities_config)
+    if client is None:
+        return None
+
+    db_name = file_utilities_config.get("mongo_database", "copilot")
+    collection_name = file_utilities_config.get("mongo_collection", "session_files")
+    collection = client[db_name][collection_name]
+    queries = [
+        {"session_id": session_id, "fileId": file_id},
+        {"sessionId": session_id, "fileId": file_id},
+        {"session_id": session_id, "file_id": file_id},
+    ]
+
+    try:
+        for query in queries:
+            record = collection.find_one(query)
+            if record:
+                return record
+    except PyMongoError as exc:
+        print(f"Mongo file lookup failed: {exc}", file=sys.stderr)
+    return None
+
+def _is_within_base_path(candidate_path: str, base_path: str) -> bool:
+    """Return True when candidate_path resolves under base_path."""
+    try:
+        base_real = os.path.realpath(base_path)
+        candidate_real = os.path.realpath(candidate_path)
+        return os.path.commonpath([candidate_real, base_real]) == base_real
+    except ValueError:
+        return False
+
+def _build_local_metadata(file_path: str, session_id: Optional[str] = None, file_id: Optional[str] = None, registry_record: Optional[dict] = None) -> dict:
+    """Build normalized metadata shape for local files."""
+    stat_result = os.stat(file_path)
+    guessed_content_type, _ = mimetypes.guess_type(file_path)
+    content_type = guessed_content_type or "application/octet-stream"
+    ext = os.path.splitext(file_path)[1].lower()
+    binary_exts = {".gz", ".zip", ".tar", ".bam", ".sam", ".png", ".jpg", ".jpeg", ".pdf", ".bin"}
+    is_binary = ext in binary_exts
+
+    record = registry_record or {}
+    return {
+        "source_type": "local",
+        "source": "bvbrc-workspace",
+        "identifier": file_id or record.get("fileId") or os.path.basename(file_path),
+        "name": os.path.basename(file_path),
+        "path": file_path,
+        "size_bytes": stat_result.st_size,
+        "content_type": content_type,
+        "is_binary": is_binary,
+        "created_at": stat_result.st_ctime,
+        "updated_at": stat_result.st_mtime,
+        "checksum_sha256": record.get("sha256"),
+        "session_id": session_id or record.get("session_id") or record.get("sessionId"),
+        "file_id": file_id or record.get("fileId") or record.get("file_id"),
+        "workspace_path": record.get("workspace_path") or record.get("workspacePath"),
+    }
+
+def _workspace_meta_array_to_dict(meta_array: list) -> dict:
+    """Convert Workspace.get metadata array to dict when needed."""
+    if not isinstance(meta_array, list) or len(meta_array) < 12:
+        return {}
+    return {
+        "name": meta_array[0],
+        "type": meta_array[1],
+        "path": meta_array[2],
+        "creation_time": meta_array[3],
+        "id": meta_array[4],
+        "owner_id": meta_array[5],
+        "size": meta_array[6],
+        "userMeta": meta_array[7],
+        "autoMeta": meta_array[8],
+        "user_permissions": meta_array[9],
+        "global_permission": meta_array[10],
+        "link_reference": meta_array[11],
+    }
+
+def _build_workspace_metadata(workspace_response: dict, resolved_path: str) -> dict:
+    """Build normalized metadata shape for workspace files."""
+    metadata = None
+    data_field = workspace_response.get("data")
+    if isinstance(data_field, dict):
+        metadata = data_field
+    elif isinstance(data_field, list):
+        if data_field and isinstance(data_field[0], list) and data_field[0]:
+            first = data_field[0][0]
+            if isinstance(first, list):
+                metadata = _workspace_meta_array_to_dict(first)
+            elif isinstance(first, dict):
+                metadata = first
+    if not isinstance(metadata, dict):
+        metadata = workspace_response if isinstance(workspace_response, dict) else {}
+
+    user_meta = metadata.get("userMeta", {}) if isinstance(metadata.get("userMeta"), dict) else {}
+    auto_meta = metadata.get("autoMeta", {}) if isinstance(metadata.get("autoMeta"), dict) else {}
+    content_type = user_meta.get("content_type") or auto_meta.get("content_type") or "application/octet-stream"
+    name = metadata.get("name") or os.path.basename(resolved_path)
+
+    return {
+        "source_type": "workspace",
+        "source": "bvbrc-workspace",
+        "identifier": metadata.get("id") or resolved_path,
+        "name": name,
+        "path": f"{metadata.get('path', '')}{name}" if metadata.get("path") else resolved_path,
+        "size_bytes": metadata.get("size"),
+        "content_type": content_type,
+        "is_binary": auto_meta.get("is_binary"),
+        "created_at": metadata.get("creation_time"),
+        "updated_at": auto_meta.get("last_modified"),
+        "checksum_sha256": user_meta.get("sha256") or auto_meta.get("sha256"),
+        "session_id": None,
+        "file_id": None,
+        "workspace_path": resolved_path,
+    }
 
 def _resolve_local_file_path(session_id: str, file_id: str, file_utilities_config: Optional[dict]) -> str:
     """Resolve local session file path using configured file_utilities settings."""
@@ -327,15 +445,73 @@ def register_workspace_tools(
             tool_name="workspace_browse_tool"
         )
 
-    @mcp.tool()
-    async def workspace_get_file_metadata_tool(token: Optional[str] = None, path: str = None) -> dict:
-        """Get the metadata of a file from the workspace.
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def get_file_metadata(
+        token: Optional[str] = None,
+        path: Optional[str] = None,
+        session_id: Optional[str] = None,
+        file_id: Optional[str] = None
+    ) -> dict:
+        """Get metadata for either a workspace file path or a local session file.
 
-        Args:
-            token: Authentication token (optional - will use default if not provided)
-            path: Path to the file to get (relative to user's home directory).
+        Resolution order:
+        1) If session_id and file_id are provided, resolve local session file metadata.
+        2) Else if path is provided and points to an existing local file under session_base_path, return local metadata.
+        3) Else if path is provided, resolve as workspace path and return workspace metadata.
         """
-        # Get the appropriate token
+        # Local session-file mode
+        if session_id and file_id:
+            try:
+                record = _get_registered_file_record(session_id, file_id, file_utilities_config or {})
+                file_path = _resolve_local_file_path(session_id, file_id, file_utilities_config)
+                if not os.path.exists(file_path):
+                    return {
+                        "error": "Local file not found",
+                        "errorType": "FILE_NOT_FOUND",
+                        "details": {"session_id": session_id, "file_id": file_id},
+                        "source": "bvbrc-workspace"
+                    }
+                return _build_local_metadata(file_path, session_id=session_id, file_id=file_id, registry_record=record)
+            except Exception as e:
+                return {
+                    "error": f"Error getting local file metadata: {str(e)}",
+                    "errorType": "PROCESSING_ERROR",
+                    "source": "bvbrc-workspace"
+                }
+
+        if not path:
+            return {
+                "error": "Provide either (session_id and file_id) or path",
+                "errorType": "INVALID_PARAMETERS",
+                "source": "bvbrc-workspace"
+            }
+
+        # Local absolute-path mode (restricted to configured session_base_path)
+        if os.path.isabs(path) and os.path.exists(path):
+            base_path = (file_utilities_config or {}).get("session_base_path")
+            if not base_path:
+                return {
+                    "error": "Local path metadata requires file_utilities.session_base_path to be configured",
+                    "errorType": "INVALID_PARAMETERS",
+                    "source": "bvbrc-workspace"
+                }
+            if not _is_within_base_path(path, base_path):
+                return {
+                    "error": "Local path is outside configured session base path",
+                    "errorType": "INVALID_PARAMETERS",
+                    "details": {"path": path},
+                    "source": "bvbrc-workspace"
+                }
+            try:
+                return _build_local_metadata(path)
+            except Exception as e:
+                return {
+                    "error": f"Error getting local file metadata: {str(e)}",
+                    "errorType": "PROCESSING_ERROR",
+                    "source": "bvbrc-workspace"
+                }
+
+        # Workspace-path mode
         auth_token = token_provider.get_token(token)
         if not auth_token:
             return {
@@ -344,14 +520,14 @@ def register_workspace_tools(
                 "source": "bvbrc-workspace"
             }
 
-        # Extract user_id from token for path resolution and logging
         user_id = extract_userid_from_token(auth_token)
         resolved_path = resolve_relative_path(path, user_id)
-
-        print(f"Getting metadata for path: {resolved_path}, user_id: {user_id}")
+        print(f"Getting metadata for workspace path: {resolved_path}, user_id: {user_id}", file=sys.stderr)
 
         result = await workspace_get_file_metadata(api, resolved_path, auth_token)
-        return result
+        if "error" in result:
+            return result
+        return _build_workspace_metadata(result, resolved_path)
 
     @mcp.tool()
     async def workspace_download_file_tool(token: Optional[str] = None, path: str = None, output_file: Optional[str] = None, return_data: bool = False) -> dict:
