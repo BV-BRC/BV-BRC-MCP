@@ -504,10 +504,16 @@ async def list_jobs(
             "call": {
                 "tool": "list_jobs",
                 "backend_method": "AppService.enumerate_tasks_filtered",
+                # Keep replay metadata aligned with the MCP tool schema.
                 "arguments_executed": {
                     "offset": offset,
                     "limit": limit,
-                    "simple_filter": simple_filter
+                    "sort_by": sort_by,
+                    "sort_dir": sort_dir,
+                    "status": status,
+                    "service": service,
+                    "search": search,
+                    "include_archived": include_archived
                 },
                 "replayable": True
             },
