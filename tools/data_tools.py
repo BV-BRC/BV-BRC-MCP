@@ -26,6 +26,7 @@ from functions.data_functions import (
     create_query_plan_internal,
     select_collection_for_query,
     get_feature_sequence_by_id,
+    get_genome_sequence_by_id,
     CURSOR_BATCH_SIZE
 )
 from common.llm_client import create_llm_client_from_config
@@ -837,5 +838,75 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         except Exception as e:
             return {
                 "error": f"Error retrieving sequence: {str(e)}",
+                "source": "bvbrc-mcp-data"
+            }
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    async def bvbrc_get_genome_sequence_by_id(genome_ids: List[str],
+                                             token: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get the nucleotide sequences for complete genomes by their genome IDs.
+        
+        This tool queries the genome_sequence collection to retrieve full genomic sequences
+        including chromosomes and plasmids. Each genome may have multiple sequences.
+        
+        Args:
+            genome_ids: List of genome IDs (e.g., ["208964.12", "511145.12"])
+                       Can be a single ID in a list or multiple IDs for batch retrieval
+            token: Authentication token (optional, auto-detected if token_provider is configured)
+            
+        Returns:
+            Dict with either:
+            - Success: {
+                "fasta": <str>,                   # FASTA formatted sequences with headers
+                "count": <int>,                   # Number of sequences successfully retrieved
+                "requested": <int>,               # Number of IDs requested
+                "not_found": [<str>, ...],        # Optional: IDs that weren't found
+                "warnings": [<str>, ...],         # Optional: Warning messages
+                "source": "bvbrc-mcp-data"
+              }
+            - Error: {
+                "error": <error_message>,
+                "source": "bvbrc-mcp-data"
+              }
+        
+        Example FASTA format:
+            >NC_002516
+            tttaaagagaccggcgattctagtgaaatcgaacgggcaggtc...
+            >plasmid_01
+            atcgatcgatcgatcg...
+        
+        Example:
+            # Get genome sequence for a single genome
+            result = bvbrc_get_genome_sequence_by_id(["208964.12"])
+            
+            # Get genome sequences for multiple genomes (batch query)
+            result = bvbrc_get_genome_sequence_by_id([
+                "208964.12",
+                "511145.12",
+                "83332.12"
+            ])
+        """
+        print(f"Getting genome sequence(s) for {len(genome_ids)} genome(s)")
+        
+        # Authentication headers
+        headers: Optional[Dict[str, str]] = None
+        if _token_provider:
+            auth_token = _token_provider.get_token(token)
+            if auth_token:
+                headers = {"Authorization": auth_token}
+        elif token:
+            headers = {"Authorization": token}
+        
+        try:
+            result = await get_genome_sequence_by_id(
+                genome_ids=genome_ids,
+                base_url=_base_url,
+                headers=headers
+            )
+            return result
+        except Exception as e:
+            return {
+                "error": f"Error retrieving genome sequence: {str(e)}",
                 "source": "bvbrc-mcp-data"
             }

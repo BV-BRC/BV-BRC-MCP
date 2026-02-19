@@ -8,6 +8,7 @@ Combines mvp_functions and common_functions from the data-mcp-server.
 import os
 import re
 import json
+import sys
 import time
 import asyncio
 from typing import Any, Dict, List, Tuple, Optional, Set
@@ -933,7 +934,7 @@ async def get_feature_sequence_by_id(
                 md5_to_sequence[md5] = sequence
         
         # Build final results list
-        results_list: List[Dict[str, Any]] = []
+        results_list: List[str] = []
         found_ids: Set[str] = set()
         
         for pid in patric_ids:
@@ -941,13 +942,7 @@ async def get_feature_sequence_by_id(
                 md5 = patric_id_to_md5[pid]
                 if md5 in md5_to_sequence:
                     sequence = md5_to_sequence[md5]
-                    results_list.append({
-                        "patric_id": pid,
-                        "sequence": sequence,
-                        "md5": md5,
-                        "sequence_type": sequence_type,
-                        "length": len(sequence)
-                    })
+                    results_list.append(f">{pid}\n{sequence}")
                     found_ids.add(pid)
         
         # Collect IDs that weren't found or didn't have sequences
@@ -956,7 +951,7 @@ async def get_feature_sequence_by_id(
         print(f"Successfully retrieved {len(results_list)} {sequence_type.upper()} sequence(s)")
         
         result = {
-            "results": results_list,
+            "fasta": '\n'.join(results_list),
             "count": len(results_list),
             "requested": len(patric_ids),
             "source": "bvbrc-mcp-data"
@@ -976,11 +971,162 @@ async def get_feature_sequence_by_id(
             )
             result["missing_md5_ids"] = missing_md5_ids
         
+        # Log result summary (without the potentially large FASTA content)
+        result_summary = {
+            "count": result["count"],
+            "requested": result["requested"],
+            "source": result["source"],
+            "fasta_length": len(result["fasta"]),
+            "fasta_preview": result["fasta"][:200] + "..." if len(result["fasta"]) > 200 else result["fasta"]
+        }
+        if "not_found" in result:
+            result_summary["not_found"] = result["not_found"]
+        if "warnings" in result:
+            result_summary["warnings"] = result["warnings"]
+        if "missing_md5_ids" in result:
+            result_summary["missing_md5_ids"] = result["missing_md5_ids"]
+        
+        print('********* get_feature_sequence_by_id result *********', file=sys.stderr)
+        print(result_summary, file=sys.stderr)
         return result
         
     except Exception as e:
         return {
             "error": f"Error retrieving sequences: {str(e)}",
+            "source": "bvbrc-mcp-data"
+        }
+
+
+async def get_genome_sequence_by_id(
+    genome_ids: List[str],
+    base_url: str = None,
+    headers: Dict[str, str] = None
+) -> Dict[str, Any]:
+    """
+    Get the genome sequences by their genome IDs.
+    
+    This function queries the genome_sequence collection to retrieve full genomic sequences.
+    
+    Args:
+        genome_ids: List of genome IDs (e.g., ["208964.12", "511145.12"])
+        base_url: Optional base URL override
+        headers: Optional headers override
+        
+    Returns:
+        Dict with either:
+        - Success: {
+            "fasta": <str>,                   # FASTA formatted sequences
+            "count": <int>,                   # Number of sequences successfully retrieved
+            "requested": <int>,               # Number of IDs requested
+            "not_found": [<str>, ...],        # Optional: IDs that weren't found
+            "warnings": [<str>, ...],         # Optional: Warning messages
+            "source": "bvbrc-mcp-data"
+          }
+        - Error: {"error": <error_message>, "source": "bvbrc-mcp-data"}
+    """
+    if not genome_ids or not isinstance(genome_ids, list):
+        return {
+            "error": "genome_ids must be a non-empty list",
+            "source": "bvbrc-mcp-data"
+        }
+    
+    # Remove duplicates and empty strings
+    genome_ids = [gid for gid in genome_ids if gid and str(gid).strip()]
+    genome_ids = list(dict.fromkeys(genome_ids))  # Remove duplicates while preserving order
+    
+    if not genome_ids:
+        return {
+            "error": "genome_ids list is empty after filtering",
+            "source": "bvbrc-mcp-data"
+        }
+    
+    print(f"Querying genome_sequence for {len(genome_ids)} genome_id(s)")
+    
+    try:
+        # Build filter using structured filters for the "in" operator
+        filters = {
+            "field": "genome_id",
+            "op": "in",
+            "value": genome_ids
+        }
+        
+        filter_str = build_filter(filters)
+        
+        # Set up headers for FASTA format
+        query_headers = dict(headers) if headers else {}
+        query_headers["http_accept"] = "application/dna+fasta"
+        
+        genome_result = await query_direct(
+            core="genome_sequence",
+            filter_str=filter_str,
+            options={"select": ["sequence_id", "sequence", "genome_id", "genome_name", "description", "accession"]},
+            base_url=base_url,
+            headers=query_headers,
+            batch_size=min(len(genome_ids) * 2, 10000)  # Reasonable batch size
+        )
+        
+        genome_results = genome_result.get("results", [])
+        if not genome_results:
+            return {
+                "error": f"No genome sequences found with the provided genome_ids",
+                "requested_ids": genome_ids,
+                "source": "bvbrc-mcp-data"
+            }
+        
+        print(f"Found {len(genome_results)} genome sequence(s)")
+        
+        # Build final results list in FASTA format
+        results_list: List[str] = []
+        found_genome_ids: Set[str] = set()
+        
+        for genome_seq in genome_results:
+            sequence_id = genome_seq.get("sequence_id", "")
+            sequence = genome_seq.get("sequence", "")
+            genome_id = genome_seq.get("genome_id", "")
+            
+            if sequence_id and sequence:
+                results_list.append(f">{sequence_id}\n{sequence}")
+                if genome_id:
+                    found_genome_ids.add(genome_id)
+        
+        # Collect IDs that weren't found
+        not_found = [gid for gid in genome_ids if gid not in found_genome_ids]
+        
+        print(f"Successfully retrieved {len(results_list)} genome sequence(s)")
+        
+        result = {
+            "fasta": '\n'.join(results_list),
+            "count": len(results_list),
+            "requested": len(genome_ids),
+            "source": "bvbrc-mcp-data"
+        }
+        
+        if not_found:
+            result["not_found"] = not_found
+            result["warnings"] = [
+                f"{len(not_found)} genome_id(s) not found or missing sequence data"
+            ]
+        
+        # Log result summary (without the potentially large FASTA content)
+        result_summary = {
+            "count": result["count"],
+            "requested": result["requested"],
+            "source": result["source"],
+            "fasta_length": len(result["fasta"]),
+            "fasta_preview": result["fasta"][:200] + "..." if len(result["fasta"]) > 200 else result["fasta"]
+        }
+        if "not_found" in result:
+            result_summary["not_found"] = result["not_found"]
+        if "warnings" in result:
+            result_summary["warnings"] = result["warnings"]
+        
+        print('********* get_genome_sequence_by_id result *********', file=sys.stderr)
+        print(result_summary, file=sys.stderr)
+        return result
+        
+    except Exception as e:
+        return {
+            "error": f"Error retrieving genome sequences: {str(e)}",
             "source": "bvbrc-mcp-data"
         }
 
