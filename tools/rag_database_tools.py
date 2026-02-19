@@ -49,8 +49,8 @@ def register_rag_database_tools(mcp: FastMCP, config: dict = None):
         🚫 DO NOT USE THIS TOOL FOR:
         - Authoritative app/service listings (use list_service_apps)
         - Exact submission parameter schemas for a service (use get_service_submission_schema)
-        - Querying biological records from data collections (use bvbrc_query_collection)
-        - Broad cross-collection record search (use bvbrc_global_data_search)
+        - Querying biological records from data collections (use bvbrc_search_data with advanced=true)
+        - Broad cross-collection record search (use bvbrc_search_data with advanced=false)
         - Retrieving specific biological records or dataset content directly
         - Workspace file browsing/downloading tasks (use workspace tools)
         
@@ -105,7 +105,7 @@ def register_rag_database_tools(mcp: FastMCP, config: dict = None):
         - Finding candidate datasets before downstream analysis
 
         🚫 DO NOT USE THIS TOOL FOR:
-        - Querying primary data collections (use bvbrc_query_collection)
+        - Querying primary data collections (use bvbrc_search_data)
         - Help/FAQ usage guidance (use helpdesk_service_usage)
         - Workspace file operations (use workspace tools)
 

@@ -11,8 +11,18 @@ class QueryRequest(BaseModel):
     """Request model for document retrieval queries."""
     
     query: str = Field(..., description="The search query text")
-    top_k: int = Field(default=10, ge=1, le=100, description="Number of documents to retrieve")
-    score_threshold: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum similarity score")
+    top_k: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Number of documents to retrieve (uses config default if omitted)",
+    )
+    score_threshold: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity score (uses config default if omitted)",
+    )
 
 
 class DocumentResult(BaseModel):

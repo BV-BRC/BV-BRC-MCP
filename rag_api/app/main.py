@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_config
 from app.routers import query_router, databases_router, health_router
 from app.services.database_manager import get_database_manager
+from app.services.rag_service import get_rag_service
 
 
 @asynccontextmanager
@@ -19,6 +20,15 @@ async def lifespan(app: FastAPI):
     print("Starting RAG API...")
     # Initialize database manager connection
     get_database_manager()
+    # Eagerly load active FAISS indexes so first query does not pay cold-start cost.
+    rag_service = get_rag_service()
+    preload_summary = rag_service.preload_active_indexes()
+    print(
+        "RAG preload summary: "
+        f"loaded={preload_summary['loaded']}, "
+        f"skipped={preload_summary['skipped']}, "
+        f"failed={preload_summary['failed']}"
+    )
     print("RAG API started successfully")
     
     yield
@@ -63,5 +73,12 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    runtime = get_config().runtime
+    uvicorn.run(
+        "app.main:app",
+        host=runtime.host,
+        port=runtime.port,
+        reload=runtime.reload,
+        log_level=runtime.log_level,
+    )
 

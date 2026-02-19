@@ -16,6 +16,8 @@ class EmbeddingConfig(BaseModel):
     url: str = Field(..., description="URL of the embedding endpoint")
     model: str = Field(..., description="Model name for embeddings")
     api_key: str = Field(..., description="API key for authentication")
+    request_timeout_seconds: int = Field(default=30, description="Embedding request timeout")
+    health_timeout_seconds: int = Field(default=5, description="Embedding health check timeout")
 
 
 class MongoDBConfig(BaseModel):
@@ -26,11 +28,34 @@ class MongoDBConfig(BaseModel):
     collection: str = Field(default="ragList", description="Collection name for RAG configs")
 
 
+class RuntimeConfig(BaseModel):
+    """Configuration for runtime/server behavior."""
+
+    host: str = Field(default="0.0.0.0", description="Host interface to bind")
+    port: int = Field(default=8000, description="Port to bind")
+    reload: bool = Field(default=False, description="Enable hot reload")
+    log_level: str = Field(default="info", description="Uvicorn log level")
+
+
+class RetrievalConfig(BaseModel):
+    """Configuration for retrieval defaults."""
+
+    default_top_k: int = Field(default=10, ge=1, le=100, description="Default top-k")
+    default_score_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Default minimum similarity score",
+    )
+
+
 class AppConfig(BaseModel):
     """Main application configuration."""
     
     embedding: EmbeddingConfig
     mongodb: MongoDBConfig
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     api_title: str = Field(default="RAG Retrieval API")
     api_version: str = Field(default="1.0.0")
     debug: bool = Field(default=False)
@@ -62,11 +87,23 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
             url=config_data.get("embedding_url"),
             model=config_data.get("embedding_model"),
             api_key=config_data.get("embedding_apiKey"),
+            request_timeout_seconds=config_data.get("embedding_request_timeout_seconds", 30),
+            health_timeout_seconds=config_data.get("embedding_health_timeout_seconds", 5),
         ),
         mongodb=MongoDBConfig(
             url=config_data.get("mongodb_url"),
             database=config_data.get("mongodb_database", "copilot"),
             collection=config_data.get("mongodb_collection", "ragList"),
+        ),
+        runtime=RuntimeConfig(
+            host=config_data.get("host", "0.0.0.0"),
+            port=config_data.get("port", 8000),
+            reload=config_data.get("reload", False),
+            log_level=config_data.get("log_level", "info"),
+        ),
+        retrieval=RetrievalConfig(
+            default_top_k=config_data.get("default_top_k", 10),
+            default_score_threshold=config_data.get("default_score_threshold", 0.0),
         ),
         api_title=config_data.get("api_title", "RAG Retrieval API"),
         api_version=config_data.get("api_version", "1.0.0"),

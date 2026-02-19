@@ -17,6 +17,8 @@ class EmbeddingService:
         self.url = config.embedding.url
         self.model = config.embedding.model
         self.api_key = config.embedding.api_key
+        self.request_timeout_seconds = config.embedding.request_timeout_seconds
+        self.health_timeout_seconds = config.embedding.health_timeout_seconds
     
     def get_embeddings(self, texts: str | list[str]) -> np.ndarray:
         """Get embeddings for the given texts.
@@ -43,7 +45,12 @@ class EmbeddingService:
             "input": texts
         }
         
-        response = requests.post(self.url, headers=headers, json=payload, timeout=30)
+        response = requests.post(
+            self.url,
+            headers=headers,
+            json=payload,
+            timeout=self.request_timeout_seconds,
+        )
         
         if response.status_code != 200:
             raise ValueError(
@@ -74,7 +81,12 @@ class EmbeddingService:
                 "model": self.model,
                 "input": ["test"]
             }
-            response = requests.post(self.url, headers=headers, json=payload, timeout=5)
+            response = requests.post(
+                self.url,
+                headers=headers,
+                json=payload,
+                timeout=self.health_timeout_seconds,
+            )
             return response.status_code == 200
         except Exception:
             return False

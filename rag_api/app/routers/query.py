@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.config import get_config
 from app.models.schemas import QueryRequest, QueryResponse, DocumentResult, ErrorResponse
 from app.services.rag_service import get_rag_service
 
@@ -29,13 +30,20 @@ async def query_database(database_name: str, request: QueryRequest) -> QueryResp
         QueryResponse with retrieved documents and query embedding.
     """
     try:
+        config = get_config()
         rag_service = get_rag_service()
+        top_k = request.top_k if request.top_k is not None else config.retrieval.default_top_k
+        score_threshold = (
+            request.score_threshold
+            if request.score_threshold is not None
+            else config.retrieval.default_score_threshold
+        )
         
         result = rag_service.search(
             db_name=database_name,
             query=request.query,
-            top_k=request.top_k,
-            score_threshold=request.score_threshold,
+            top_k=top_k,
+            score_threshold=score_threshold,
         )
         
         documents = [

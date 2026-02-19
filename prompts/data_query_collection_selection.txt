@@ -11,6 +11,9 @@ Rules:
 3. If the request is ambiguous, still choose one best collection and list alternatives.
 4. Never invent collection names.
 5. Output valid JSON only (no markdown, no prose outside JSON).
+6. Focus on domain-specific biological/scientific terms in the query.
+7. Ignore common conversational words like "from", "the", "a", "an", "in", "on", "at", "to", "for", "with", "by", etc.
+8. Base your collection selection only on meaningful scientific keywords and entities.
 
 Output format:
 {
