@@ -235,7 +235,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                                format: Optional[str] = "tsv",
                                token: Optional[str] = None) -> Dict[str, Any]:
         """
-        Query BV-BRC data collections with structured filters; Solr syntax is handled for you.
+        Execute a structured, single-collection BV-BRC data query.
         
         USE THIS TOOL FOR:
         - Specific data queries 
@@ -245,6 +245,11 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         WORKFLOW: For natural language data queries, ALWAYS call bvbrc_plan_query_collection 
         FIRST to generate parameters. ONLY call this tool directly when you already have 
         structured parameters from the planner or explicitly provided by the user
+
+        DO NOT USE THIS TOOL FOR:
+        - Choosing which collection to search from natural language (use bvbrc_plan_query_collection)
+        - Fast exploratory keyword search across collections (use bvbrc_global_data_search)
+        - Help/FAQ guidance (use helpdesk_service_usage)
         
         Returns a single page of results with cursor for pagination. For large result sets,
         make multiple calls using the returned nextCursorId until it becomes null.
@@ -513,7 +518,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
     @mcp.tool(annotations={"readOnlyHint": True})
     async def bvbrc_plan_query_collection(user_query: str) -> Dict[str, Any]:
         """
-        Plan a single-collection query from natural language using a two-step internal LLM procedure:
+        Plan (but do not execute) a single-collection query from natural language using a two-step internal LLM procedure:
         1) select collection
         2) generate validated query arguments
 
@@ -522,6 +527,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         - Queries that need to retrieve actual data records from BV-BRC collections
         
         ⚠️ ALWAYS call this tool FIRST for natural language data queries. NEVER manually construct query parameters from natural language.
+        
+        DO NOT USE THIS TOOL FOR:
+        - Returning actual records (use bvbrc_query_collection with the returned plan)
+        - Broad relevance search where strict filters are not needed (use bvbrc_global_data_search)
         
         The returned plan contains all parameters needed to call bvbrc_query_collection.
 
@@ -597,9 +606,16 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Perform global natural-language data search across BV-BRC by:
+        Perform exploratory natural-language search across BV-BRC collections by:
         1) selecting the best collection with an internal LLM
         2) executing a Solr q= query against that collection
+
+        Use this when the user wants quick discovery ("find likely matches") rather than
+        a carefully structured, field-level query plan.
+
+        DO NOT USE THIS TOOL FOR:
+        - Precisely constrained field/filter queries (use bvbrc_plan_query_collection -> bvbrc_query_collection)
+        - Helpdesk/service usage guidance (use helpdesk_service_usage)
 
         IMPORTANT:
         - user_query must be plain natural language or plain keywords.

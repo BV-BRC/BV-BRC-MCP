@@ -10,6 +10,8 @@ from common.json_rpc import JsonRpcCaller
 from tools.data_tools import register_data_tools
 from tools.service_tools import register_service_tools
 from tools.workspace_tools import register_workspace_tools
+from tools.rag_database_tools import register_rag_database_tools
+from tools.sra_tools import register_sra_tools
 from common.token_provider import TokenProvider
 from starlette.responses import JSONResponse, HTMLResponse, RedirectResponse
 import sys
@@ -60,6 +62,12 @@ register_service_tools(mcp, service_api, similar_genome_finder_api, token_provid
 
 print("Registering workspace tools...", file=sys.stderr)
 register_workspace_tools(mcp, workspace_api, token_provider, config.file_utilities)
+
+print("Registering RAG database tools...", file=sys.stderr)
+register_rag_database_tools(mcp, config.rag_database)
+
+print("Registering SRA tools...", file=sys.stderr)
+register_sra_tools(mcp, config.sra_tools)
 
 # Add health check tool
 # @mcp.tool()
@@ -133,6 +141,8 @@ def main() -> int:
     print(f"  - Data tools: {base_url}", file=sys.stderr)
     print(f"  - Service tools: {service_api_url}", file=sys.stderr)
     print(f"  - Workspace tools: {workspace_api_url}", file=sys.stderr)
+    print(f"  - RAG database tools: enabled", file=sys.stderr)
+    print(f"  - SRA tools: enabled", file=sys.stderr)
     
     try:
         mcp.run(transport="http", host=mcp_url, port=port)

@@ -11,6 +11,7 @@ from common.json_rpc import JsonRpcCaller
 from tools.data_tools import register_data_tools
 from tools.service_tools import register_service_tools, extract_userid_from_token
 from tools.workspace_tools import register_workspace_tools
+from tools.rag_database_tools import register_rag_database_tools
 from common.token_provider import TokenProvider
 from functions.workflow_functions import initialize_service_catalog
 import json
@@ -31,6 +32,7 @@ workspace_api_url = config.get("workspace_url", "https://p3.theseed.org/services
 service_api_url = config.get("service_api_url", "https://p3.theseed.org/services/app_service")
 similar_genome_finder_api_url = config.get("similar_genome_finder_api_url", service_api_url)
 file_utilities_config = config.get("file_utilities", {})
+rag_database_config = config.get("rag_database", {})
 
 # Initialize token provider for STDIO mode
 # In STDIO mode, token comes from KB_AUTH_TOKEN environment variable
@@ -54,6 +56,9 @@ register_service_tools(mcp, service_api, similar_genome_finder_api, token_provid
 print("Registering workspace tools...", file=sys.stderr)
 register_workspace_tools(mcp, workspace_api, token_provider, file_utilities_config)
 
+print("Registering RAG database tools...", file=sys.stderr)
+register_rag_database_tools(mcp, rag_database_config)
+
 # Add health check tool
 @mcp.tool()
 def health_check() -> str:
@@ -67,6 +72,7 @@ def main() -> int:
     print(f"  - Data tools: {base_url}", file=sys.stderr)
     print(f"  - Service tools: {service_api_url}", file=sys.stderr)
     print(f"  - Workspace tools: {workspace_api_url}", file=sys.stderr)
+    print(f"  - RAG database tools: enabled", file=sys.stderr)
     print(f"  - Authentication: KB_AUTH_TOKEN environment variable", file=sys.stderr)
     
     # Check if KB_AUTH_TOKEN is set

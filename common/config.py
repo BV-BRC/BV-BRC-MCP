@@ -79,6 +79,12 @@ class AppConfig:
         )
         self.file_utilities = config.get("file_utilities", {})
         
+        # RAG database configuration
+        self.rag_database = config.get("rag_database", {})
+        
+        # SRA tools configuration
+        self.sra_tools = config.get("sra_tools", {})
+        
         # Authentication
         self.authentication_url = config.get(
             "authentication_url",

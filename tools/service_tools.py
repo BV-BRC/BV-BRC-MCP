@@ -161,7 +161,15 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
     @mcp.tool(name="list_service_apps", annotations={"readOnlyHint": True})
     async def service_enumerate_apps(token: Optional[str] = None) -> str:
         """
-        Enumerate all available BV-BRC service apps.
+        List available BV-BRC service apps that can be submitted.
+
+        USE THIS TOOL FOR:
+        - Discovering available service names
+        - Validating whether a service exists before schema lookup/submission
+
+        DO NOT USE THIS TOOL FOR:
+        - Getting input parameter definitions (use get_service_submission_schema)
+        - How-to guidance for choosing/using a service (use helpdesk_service_usage)
 
         Returns:
             JSON array of user-friendly service names (e.g., ["blast", "genome_assembly", "rnaseq", ...])
@@ -286,7 +294,14 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         include_archived: bool = False
     ) -> Dict[str, Any]:
         """
-        List recent jobs with sorting/filtering support.
+        List jobs (summary view) with sorting/filtering support.
+
+        USE THIS TOOL FOR:
+        - Finding jobs by status/service/search term
+        - Getting paginated recent-job summaries
+
+        DO NOT USE THIS TOOL FOR:
+        - Deep inspection or troubleshooting for specific jobs (use get_job_details)
 
         Args:
             token: Authentication token (optional)
@@ -336,8 +351,15 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
     @mcp.tool(name="get_service_submission_schema", annotations={"readOnlyHint": True})
     def service_get_service_submission_schema(service_name: str = None, token: Optional[str] = None) -> str:
         """
-        Fetch the parameter/schema details needed immediately before submitting a service job.
+        Fetch the authoritative submission schema for one service.
         Use the helpdesk tool for any other guidance or questions about which service to run.
+
+        USE THIS TOOL FOR:
+        - Exact required/optional parameters before submit_workflow/service execution
+
+        DO NOT USE THIS TOOL FOR:
+        - Listing available services (use list_service_apps)
+        - Troubleshooting existing jobs (use get_job_details)
 
         Args:
             service_name: Name of the service to get submission schema for (e.g., 'genome_assembly', 'blast', 'primer_design')
@@ -375,12 +397,11 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         workspace_items: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        Plan a workflow from natural language description without executing it.
+        Plan and persist a workflow from natural language without executing it.
 
         This tool generates a workflow manifest (plan) based on your natural language request.
         The workflow is planned and persisted but NOT validated or submitted for execution.
         Validation occurs when using validate/submit workflow endpoints.
-        Use submit_workflow() to actually execute the planned workflow.
 
         This two-step approach allows you to:
         1. Review the planned workflow before execution
@@ -564,11 +585,14 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Submit a planned/validated workflow for execution.
+        Submit an already planned workflow for execution.
 
         This tool submits an already-planned workflow by workflow_id. The workflow
         should come from plan_workflow(), which assigns workflow_id and persists
         the workflow as status='planned'. Validation is performed during submission.
+
+        DO NOT USE THIS TOOL FOR:
+        - Creating a new plan from natural language (use plan_workflow first)
 
         Args:
             workflow_id: Planned workflow ID (preferred)

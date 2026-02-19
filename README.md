@@ -194,7 +194,12 @@ The `config.json` file contains:
     "similar_genome_finder_api_url": "https://p3.theseed.org/services/minhash_service",
     "authentication_url": "https://user.patricbrc.org/authenticate",
     "mcp_url": "127.0.0.1",
-    "port": 12010
+    "port": 12010,
+    "rag_database": {
+        "database_name": "bvbrc_helpdesk",
+        "rag_api_base_url": "http://127.0.0.1:8000",
+        "rag_api_timeout_seconds": 45
+    }
 }
 ```
 
@@ -208,6 +213,12 @@ Start the HTTP server:
 ```
 
 The server will start on the configured host and port (default: `127.0.0.1:12010`).
+
+Start the standalone RAG API (required for helpdesk RAG tools):
+```bash
+cd rag_api
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
 #### STDIO Mode (for Claude Desktop, etc.)
 

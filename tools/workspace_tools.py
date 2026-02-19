@@ -396,7 +396,7 @@ def register_workspace_tools(
         sort_order: Optional[str] = None,
         num_results: Optional[int] = 50
     ) -> dict:
-        """Browse workspace content with one interface.
+        """Browse/search workspace directories and files (discovery tool).
 
         Args:
             token: Authentication token (optional - will use default if not provided)
@@ -429,6 +429,10 @@ def register_workspace_tools(
             sort_by: Optional sort field. Valid options: creation_time, name, size, type.
             sort_order: Optional sort direction. Valid options: asc, desc.
             num_results: Maximum number of results to return. Defaults to 50.
+
+        DO NOT USE THIS TOOL FOR:
+            - File content retrieval (use workspace_preview_file_tool or workspace_read_range_tool)
+            - Detailed single-file metadata inspection (use get_file_metadata)
         """
         auth_token = token_provider.get_token(token)
         if not auth_token:
@@ -470,12 +474,16 @@ def register_workspace_tools(
         session_id: Optional[str] = None,
         file_id: Optional[str] = None
     ) -> dict:
-        """Get metadata for either a workspace file path or a local session file.
+        """Get normalized metadata for one file (workspace path or local session file).
 
         Resolution order:
         1) If session_id and file_id are provided, resolve local session file metadata.
         2) Else if path is provided and points to an existing local file under session_base_path, return local metadata.
         3) Else if path is provided, resolve as workspace path and return workspace metadata.
+
+        DO NOT USE THIS TOOL FOR:
+        - Listing directories or searching for files (use workspace_browse_tool)
+        - Reading file content bytes/text (use preview_file/workspace_preview_file_tool/workspace_read_range_tool/read_file_lines)
         """
         # Local session-file mode
         if session_id and file_id:
@@ -580,10 +588,11 @@ def register_workspace_tools(
 
     @mcp.tool(annotations={"readOnlyHint": True})
     async def workspace_preview_file_tool(token: Optional[str] = None, path: str = None) -> dict:
-        """Preview a file from the workspace by downloading only the first portion.
+        """Preview the beginning of a workspace file (quick content peek).
         
         This tool downloads a preview of the file (first portion) without downloading the entire file.
         Useful for quickly viewing the beginning of large files.
+        Use workspace_read_range_tool for explicit byte-range paging.
 
         Args:
             token: Authentication token (optional - will use default if not provided)
@@ -614,9 +623,10 @@ def register_workspace_tools(
         start_byte: int = 0,
         max_bytes: int = 8192
     ) -> dict:
-        """Read a byte range from a workspace file.
+        """Read an explicit byte range from a workspace file.
 
         Use this tool to page through large files safely by changing start_byte.
+        This is the precise paging variant of workspace_preview_file_tool.
 
         Args:
             token: Authentication token (optional - will use default if not provided)
@@ -655,7 +665,11 @@ def register_workspace_tools(
         start_byte: int = 0,
         max_bytes: int = 8192
     ) -> dict:
-        """Preview a byte range from a local Copilot session file."""
+        """Preview a byte range from a local Copilot session file.
+
+        Use this for session-local files identified by (session_id, file_id).
+        Do not use for workspace paths; use workspace_preview_file_tool instead.
+        """
         print(f"Getting preview of local file {file_id} in session {session_id}...", file=sys.stderr)
         try:
             if not session_id or not file_id:
@@ -713,7 +727,11 @@ def register_workspace_tools(
         end: Optional[int] = None,
         limit: int = 1000
     ) -> dict:
-        """Read line ranges from a local Copilot session file."""
+        """Read line ranges from a local Copilot session file.
+
+        Use this for structured/text line access in session-local files.
+        Do not use for workspace paths; use workspace_read_range_tool for workspace files.
+        """
         print(
             f"Reading lines from local file {file_id} in session {session_id}: start={start}, end={end}, limit={limit}",
             file=sys.stderr
