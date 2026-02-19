@@ -394,9 +394,9 @@ def register_workspace_tools(
         file_types: Optional[List[str]] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        num_results: int = 50
+        num_results: Optional[int] = 50
     ) -> dict:
-        """Browse the workspace using a single unified interface.
+        """Browse workspace content with one interface.
 
         Args:
             token: Authentication token (optional - will use default if not provided)
@@ -441,10 +441,12 @@ def register_workspace_tools(
         user_id = extract_userid_from_token(auth_token)
         resolved_path = resolve_relative_path(path, user_id)
 
+        effective_num_results = 50 if num_results is None else num_results
+
         print(
             f"Browsing workspace path: {resolved_path}, user_id: {user_id}, "
             f"search: {search}, filename_search_terms: {filename_search_terms}, extension: {file_extension}, "
-            f"file_types: {file_types}, sort_by: {sort_by}, sort_order: {sort_order}, num_results: {num_results}",
+            f"file_types: {file_types}, sort_by: {sort_by}, sort_order: {sort_order}, num_results: {effective_num_results}",
             file=sys.stderr
         )
         return await workspace_browse(
@@ -457,7 +459,7 @@ def register_workspace_tools(
             file_types=file_types,
             sort_by=sort_by,
             sort_order=sort_order,
-            num_results=num_results,
+            num_results=effective_num_results,
             tool_name="workspace_browse_tool"
         )
 

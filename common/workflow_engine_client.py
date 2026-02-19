@@ -94,12 +94,12 @@ class WorkflowEngineClient:
 
         return cleaned
 
-    async def submit_workflow(self, workflow_id: str, auth_token: str) -> Dict[str, Any]:
+    async def submit_workflow(self, workflow_json: Dict[str, Any], auth_token: str) -> Dict[str, Any]:
         """
-        Submit a previously registered workflow to the workflow engine for execution.
+        Validate and submit a workflow specification to the workflow engine.
 
         Args:
-            workflow_id: Existing workflow identifier
+            workflow_json: Complete workflow manifest dictionary
             auth_token: BV-BRC authentication token
 
         Returns:
@@ -118,10 +118,11 @@ class WorkflowEngineClient:
         }
 
         try:
-            print(f"Submitting workflow_id {workflow_id} to workflow engine: {url}", file=sys.stderr)
+            sanitized_payload = self._sanitize_workflow_payload(workflow_json)
+            print(f"Submitting workflow spec to workflow engine: {url}", file=sys.stderr)
 
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json={"workflow_id": workflow_id}, headers=headers) as response:
+                async with session.post(url, json=sanitized_payload, headers=headers) as response:
                     response_text = await response.text()
 
                     if response.status in (200, 201):
@@ -136,7 +137,7 @@ class WorkflowEngineClient:
                         except:
                             error_msg = response_text
                         raise WorkflowEngineError(
-                            f"Workflow submission failed: {error_msg}",
+                            f"Workflow validation/submission failed: {error_msg}",
                             error_type="VALIDATION_FAILED",
                             status_code=400
                         )
@@ -175,7 +176,7 @@ class WorkflowEngineClient:
                 error_type="TIMEOUT"
             ) from e
         except Exception as e:
-            print(f"Unexpected error submitting workflow_id {workflow_id}: {e}", file=sys.stderr)
+            print(f"Unexpected error submitting workflow: {e}", file=sys.stderr)
             raise WorkflowEngineError(
                 f"Unexpected error: {str(e)}",
                 error_type="UNKNOWN_ERROR"
@@ -320,7 +321,7 @@ class WorkflowEngineClient:
 
     async def plan_workflow(self, workflow_json: Dict[str, Any], auth_token: str) -> Dict[str, Any]:
         """
-        Validate and persist a workflow plan without execution side effects.
+        Persist a workflow plan without validation or execution side effects.
 
         Args:
             workflow_json: Complete workflow manifest dictionary

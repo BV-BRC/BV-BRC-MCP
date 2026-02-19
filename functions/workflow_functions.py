@@ -6,6 +6,7 @@ import json
 import sys
 import time
 import re
+import uuid
 from typing import Dict, List, Any, Optional
 from common.llm_client import LLMClient
 from common.json_rpc import JsonRpcCaller
@@ -958,6 +959,58 @@ def prepare_workflow_for_engine_validation(workflow_json: Dict[str, Any]) -> Dic
     return workflow_for_engine
 
 
+def normalize_workflow_output_references(workflow_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Repair common workflow_outputs reference issues from generated manifests.
+
+    - ${${steps.x.outputs.y}} -> ${steps.x.outputs.y}
+    - ${steps.step1.outputs.y} -> ${steps.<actual_step_name>.outputs.y}
+    """
+    workflow = json.loads(json.dumps(workflow_json or {}))
+    steps = workflow.get("steps", [])
+    if not isinstance(steps, list):
+        return workflow
+
+    step_names: List[str] = []
+    for step in steps:
+        if isinstance(step, dict):
+            raw_name = step.get("step_name")
+            if isinstance(raw_name, str) and raw_name.strip():
+                step_names.append(raw_name.strip())
+
+    alias_map: Dict[str, str] = {f"step{i + 1}": name for i, name in enumerate(step_names)}
+    step_name_set = set(step_names)
+
+    outputs = workflow.get("workflow_outputs", [])
+    if not isinstance(outputs, list):
+        return workflow
+
+    nested_ref_pattern = re.compile(r"^\$\{\$\{(.+)\}\}$")
+    ref_pattern = re.compile(r"^\$\{steps\.([A-Za-z_][A-Za-z0-9_]*)\.outputs\.([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+    fixed_outputs: List[Any] = []
+    for item in outputs:
+        if not isinstance(item, str):
+            fixed_outputs.append(item)
+            continue
+
+        candidate = item.strip()
+        nested_match = nested_ref_pattern.match(candidate)
+        if nested_match:
+            candidate = f"${{{nested_match.group(1)}}}"
+
+        ref_match = ref_pattern.match(candidate)
+        if ref_match:
+            step_ref, output_name = ref_match.group(1), ref_match.group(2)
+            if step_ref in alias_map and step_ref not in step_name_set:
+                candidate = f"${{steps.{alias_map[step_ref]}.outputs.{output_name}}}"
+
+        fixed_outputs.append(candidate)
+
+    workflow["workflow_outputs"] = fixed_outputs
+    return workflow
+
+
 def resolve_workflow_variables_locally(workflow_json: Dict[str, Any]) -> Dict[str, Any]:
     """
     Best-effort local variable resolution for planned workflows.
@@ -967,7 +1020,7 @@ def resolve_workflow_variables_locally(workflow_json: Dict[str, Any]) -> Dict[st
     2) Resolve ${params.xxx} inside step outputs
     3) Resolve ${steps.step.outputs.name} in workflow_outputs
     """
-    workflow = json.loads(json.dumps(workflow_json))
+    workflow = normalize_workflow_output_references(json.loads(json.dumps(workflow_json)))
     var_pattern = re.compile(r"\$\{([^}]+)\}")
 
     def resolve_simple_vars(value: Any, variables: Dict[str, Any]) -> Any:
@@ -1023,9 +1076,10 @@ def resolve_workflow_variables_locally(workflow_json: Dict[str, Any]) -> Dict[st
     # Pass 3: resolve workflow_outputs references to step outputs.
     if isinstance(steps, list):
         step_outputs_map: Dict[str, Dict[str, Any]] = {}
-        for step in steps:
+        for idx, step in enumerate(steps):
             if isinstance(step, dict) and isinstance(step.get("step_name"), str):
                 step_outputs_map[step["step_name"]] = step.get("outputs", {}) or {}
+                step_outputs_map[f"step{idx + 1}"] = step.get("outputs", {}) or {}
 
         resolved_workflow_outputs = []
         for item in workflow.get("workflow_outputs", []) or []:
@@ -1056,7 +1110,7 @@ async def create_and_execute_workflow_internal(
     workspace_items: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
-    Generate a workflow from natural language, validate it, and optionally submit it for execution.
+    Generate a workflow from natural language, then optionally persist/submit it.
 
     This is the complete end-to-end workflow creation and submission function.
 
@@ -1113,6 +1167,9 @@ async def create_and_execute_workflow_internal(
             workflow_json = workflow_result.get("workflow_json")
             prompt_payload = workflow_result.get("prompt_payload")
 
+            print('********* workflow_json *********', file=sys.stderr)
+            print(json.dumps(workflow_json, indent=2), file=sys.stderr)
+
             if not workflow_json:
                 return {
                     "error": "Failed to generate workflow JSON",
@@ -1134,138 +1191,97 @@ async def create_and_execute_workflow_internal(
                 "source": "bvbrc-service"
             }
 
-        # Stage 2: Basic validation (complex validation happens in workflow engine)
-        print("Stage 2: Validating basic workflow structure...", file=sys.stderr)
-        is_valid, error_message = validate_workflow_structure(workflow_json)
+        # Stage 2: Planning preparation (validation is deferred to validation/submit endpoints).
+        print("Stage 2: Preparing workflow for planning/submission...", file=sys.stderr)
 
-        if not is_valid:
-            return {
-                "error": error_message,
-                "errorType": "VALIDATION_FAILED",
-                "stage": "validation",
-                "partial_workflow": workflow_json,
-                "hint": "The generated workflow has basic structural issues",
-                "prompt_payload": prompt_payload,
-                "source": "bvbrc-service"
-            }
-
-        print("Stage 2: Basic validation passed (detailed validation will occur in workflow engine)", file=sys.stderr)
-
-        # If auto_execute is False, return a fully planned/validated workflow JSON.
-        # Apply parameter defaults before workflow engine operations
+        # If auto_execute is False, return a planned workflow JSON without validation.
+        # Apply parameter defaults before workflow engine planning operations.
         if not auto_execute:
             print("Stage 2b: Applying parameter defaults...", file=sys.stderr)
             workflow_json = apply_parameter_defaults(workflow_json)
-            
-            # Try validation but don't fail on validation errors - include them as notes
-            validation_notes = []
-            validation_errors = []
-            validation_warnings = []
-            validation_source = "local_with_defaults"
+            workflow_json = normalize_workflow_output_references(workflow_json)
+
             planned_workflow_id = None
             planned_workflow_status = "planned"
-            
+            planning_warnings: List[Dict[str, Any]] = []
+
             if workflow_engine_config and workflow_engine_config.get('enabled', False):
                 try:
                     engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
                     engine_timeout = workflow_engine_config.get('timeout', 30)
                     client = WorkflowEngineClient(base_url=engine_url, timeout=engine_timeout)
 
+                    # Health checks can be stricter than planning endpoints; do not block planning solely on health.
                     is_healthy = await client.health_check()
-                    if is_healthy:
-                        print("Stage 2b: Validating workflow in workflow engine (non-blocking)...", file=sys.stderr)
-                        workflow_for_validation = prepare_workflow_for_engine_validation(workflow_json)
-                        
-                        try:
-                            validation_result = await client.validate_workflow(workflow_for_validation, token)
-                            validated_workflow_json = validation_result.get('workflow_json', workflow_for_validation)
-                            workflow_json = validated_workflow_json  # Use validated version if successful
-                            validation_source = "workflow_engine"
-                            validation_warnings = validation_result.get('warnings', [])
-                            validation_notes.append("Workflow engine validation passed")
-                            print("Stage 2b: Workflow engine validation successful", file=sys.stderr)
-                        except WorkflowEngineError as e:
-                            # Validation failed, but don't fail planning - include error as note
-                            if e.error_type == "VALIDATION_FAILED":
-                                validation_errors.append(str(e))
-                                validation_notes.append("Workflow has validation errors (see validation_errors)")
-                                print(f"Stage 2b: Workflow engine validation failed (non-blocking): {e}", file=sys.stderr)
-                            else:
-                                validation_warnings.append(f"Validation check error: {str(e)}")
-                                print(f"Stage 2b: Workflow engine validation error: {e}", file=sys.stderr)
-                    else:
-                        validation_warnings.append("Workflow engine unavailable for validation")
-                        print("Workflow engine unavailable for planning validation", file=sys.stderr)
-                except Exception as e:
-                    validation_warnings.append(f"Validation check skipped due to error: {str(e)}")
-                    print(f"Unexpected error during planning validation (non-blocking): {e}", file=sys.stderr)
+                    if not is_healthy:
+                        print("Workflow engine health check failed; attempting planning anyway", file=sys.stderr)
 
-            # Persist workflow as a planned/registered workflow (no execution side effects)
-            if workflow_engine_config and workflow_engine_config.get('enabled', False):
-                try:
-                    engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
-                    engine_timeout = workflow_engine_config.get('timeout', 30)
-                    client = WorkflowEngineClient(base_url=engine_url, timeout=engine_timeout)
+                    print("Stage 2b: Persisting workflow plan in workflow engine...", file=sys.stderr)
                     workflow_for_planning = prepare_workflow_for_engine_validation(workflow_json)
-                    plan_result = await client.register_workflow(workflow_for_planning, token)
-                    planned_workflow_id = plan_result.get('workflow_id')
+                    plan_result = await client.plan_workflow(workflow_for_planning, token)
+                    planned_workflow_id = (
+                        plan_result.get('workflow_id')
+                        or plan_result.get('id')
+                        or (plan_result.get('workflow') or {}).get('workflow_id')
+                    )
                     planned_workflow_status = plan_result.get('status', 'planned')
-                    print(f"Stage 2c: Workflow registered and persisted: {planned_workflow_id}", file=sys.stderr)
-                except WorkflowEngineError as e:
-                    return {
-                        "error": str(e),
-                        "errorType": e.error_type,
-                        "status_code": e.status_code,
-                        "stage": "registration",
-                        "workflow_json": workflow_json,
-                        "hint": "Workflow plan could not be persisted in workflow engine",
-                        "prompt_payload": prompt_payload,
-                        "source": "bvbrc-service"
-                    }
-                except Exception as e:
-                    return {
-                        "error": str(e),
-                        "errorType": "REGISTRATION_FAILED",
-                        "stage": "registration",
-                        "workflow_json": workflow_json,
-                        "hint": "Unexpected error while persisting workflow plan",
-                        "prompt_payload": prompt_payload,
-                        "source": "bvbrc-service"
-                    }
 
-            # Resolve variables and return workflow JSON with validation notes
-            print("auto_execute=False, returning persisted plan with validation notes", file=sys.stderr)
+                    # Fallback for engines that expose registration instead of plan semantics.
+                    if not planned_workflow_id:
+                        print("Stage 2b: plan_workflow returned no workflow_id; trying register_workflow fallback", file=sys.stderr)
+                        register_result = await client.register_workflow(workflow_for_planning, token)
+                        planned_workflow_id = (
+                            register_result.get('workflow_id')
+                            or register_result.get('id')
+                            or (register_result.get('workflow') or {}).get('workflow_id')
+                        )
+                        planned_workflow_status = register_result.get('status', planned_workflow_status)
+
+                    print(f"Stage 2b: Workflow planned and persisted: {planned_workflow_id}", file=sys.stderr)
+                except WorkflowEngineError as e:
+                    planning_warnings.append({
+                        "type": e.error_type,
+                        "status_code": e.status_code,
+                        "message": str(e),
+                        "stage": "planning",
+                        "hint": "Workflow plan could not be persisted in workflow engine; using local workflow_id"
+                    })
+                except Exception as e:
+                    planning_warnings.append({
+                        "type": "PLANNING_FAILED",
+                        "message": str(e),
+                        "stage": "planning",
+                        "hint": "Unexpected error while persisting workflow plan; using local workflow_id"
+                    })
+
+            # Planning should never block ID assignment except malformed generation payloads.
+            if not planned_workflow_id:
+                planned_workflow_id = f"wf_local_{uuid.uuid4().hex[:12]}"
+                planned_workflow_status = "planned"
+                planning_warnings.append({
+                    "type": "PLANNING_NOT_PERSISTED",
+                    "message": "Workflow ID assigned locally because workflow engine did not return workflow_id",
+                    "stage": "planning",
+                    "hint": "Re-plan when engine validation issues are resolved to get an engine-registered ID"
+                })
+
+            # Resolve variables and return workflow JSON.
+            print("auto_execute=False, returning persisted plan", file=sys.stderr)
             locally_resolved_workflow = resolve_workflow_variables_locally(workflow_json)
-            if planned_workflow_id:
-                locally_resolved_workflow['workflow_id'] = planned_workflow_id
-                locally_resolved_workflow['status'] = planned_workflow_status
+            locally_resolved_workflow['workflow_id'] = planned_workflow_id
+            locally_resolved_workflow['status'] = planned_workflow_status
             workflow_description = build_workflow_description(locally_resolved_workflow)
-            
+
             response = {
                 "workflow_id": planned_workflow_id,
                 "status": planned_workflow_status,
                 "workflow_json": locally_resolved_workflow,
                 "workflow_description": workflow_description,
-                "message": "Workflow manifest generated with defaults applied and validation notes included (not submitted for execution)",
-                "ready_for_submission": len(validation_errors) == 0,
-                "validation": {
-                    "source": validation_source,
-                    "valid": len(validation_errors) == 0,
-                    "warnings": validation_warnings,
-                    "auto_fixes": ["Applied parameter defaults from service_required_params.json"]
-                },
+                "warnings": planning_warnings,
+                "message": "Workflow plan generated and saved (not submitted for execution)",
                 "prompt_payload": prompt_payload,
                 "source": "bvbrc-service"
             }
-            
-            # Include validation errors as notes if present
-            if validation_errors:
-                response["validation_errors"] = validation_errors
-                response["message"] = "Workflow manifest generated but has validation errors. Review and fix before submission."
-            
-            if validation_notes:
-                response["validation_notes"] = validation_notes
-            
             return response
 
         # Check if workflow engine is enabled
@@ -1279,8 +1295,8 @@ async def create_and_execute_workflow_internal(
                 "source": "bvbrc-service"
             }
 
-        # Stage 3: Register then submit to workflow engine
-        print("Stage 3: Registering and submitting workflow to execution engine...", file=sys.stderr)
+        # Stage 3: Validate and submit to workflow engine.
+        print("Stage 3: Validating and submitting workflow to execution engine...", file=sys.stderr)
         try:
             engine_url = workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')
             engine_timeout = workflow_engine_config.get('timeout', 30)
@@ -1296,22 +1312,17 @@ async def create_and_execute_workflow_internal(
                     "warning": "Workflow engine is not available",
                     "message": "Workflow generated but not submitted",
                     "hint": f"Ensure workflow engine is running at {engine_url}",
-                    "submission_url": f"{engine_url}/workflows/register",
+                    "submission_url": f"{engine_url}/workflows/submit",
                     "prompt_payload": prompt_payload,
                     "source": "bvbrc-service"
                 }
 
-            # Clean the workflow before registration - remove any fields that workflow engine assigns.
-            workflow_for_registration = prepare_workflow_for_engine_validation(workflow_json)
-
-            # Register the workflow to assign workflow_id and persist status='planned'.
-            registration_result = await client.register_workflow(workflow_for_registration, token)
-            workflow_id = registration_result.get('workflow_id')
-            if not workflow_id:
-                raise ValueError("Workflow engine registration did not return workflow_id")
-
-            # Submit the registered workflow by workflow_id.
-            result = await client.submit_planned_workflow(workflow_id, token)
+            # Clean the workflow before submission - remove engine-assigned/runtime fields.
+            workflow_for_submission = prepare_workflow_for_engine_validation(
+                normalize_workflow_output_references(workflow_json)
+            )
+            result = await client.submit_workflow(workflow_for_submission, token)
+            workflow_id = result.get('workflow_id')
 
             print(f"Stage 3: Workflow submitted successfully: {result.get('workflow_id')}", file=sys.stderr)
 
@@ -1355,8 +1366,8 @@ async def create_and_execute_workflow_internal(
                 "stage": "submission",
                 "workflow_json": workflow_json,
                 "prompt_payload": prompt_payload,
-                "hint": "Workflow was generated and validated but could not be submitted. You can submit it manually.",
-                "submission_url": f"{workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')}/workflows/{{workflow_id}}/submit",
+                "hint": "Workflow was generated but could not be submitted. You can submit it manually.",
+                "submission_url": f"{workflow_engine_config.get('api_url', 'http://localhost:8000/api/v1')}/workflows/submit",
                 "source": "bvbrc-service"
             }
         except Exception as e:
@@ -1369,7 +1380,7 @@ async def create_and_execute_workflow_internal(
                 "stage": "submission",
                 "workflow_json": workflow_json,
                 "prompt_payload": prompt_payload,
-                "hint": "Workflow was generated and validated but submission failed unexpectedly",
+                "hint": "Workflow was generated but submission failed unexpectedly",
                 "traceback": traceback.format_exc(),
                 "source": "bvbrc-service"
             }

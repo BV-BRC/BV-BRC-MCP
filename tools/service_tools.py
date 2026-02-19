@@ -10,6 +10,7 @@ import sys
 import json
 import time
 import os
+import uuid
 import traceback
 from fastmcp import FastMCP
 from common.json_rpc import JsonRpcCaller
@@ -355,8 +356,8 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         Plan a workflow from natural language description without executing it.
 
         This tool generates a workflow manifest (plan) based on your natural language request.
-        The workflow is fully planned and validated (including workflow-engine validation
-        when available) but NOT submitted for execution.
+        The workflow is planned and persisted but NOT validated or submitted for execution.
+        Validation occurs when using validate/submit workflow endpoints.
         Use submit_workflow() to actually execute the planned workflow.
 
         This two-step approach allows you to:
@@ -431,7 +432,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             # Get workflow engine configuration
             workflow_engine_config = config.get('workflow_engine', {})
 
-            # Generate and validate workflow manifest first (no execution)
+            # Generate and persist workflow manifest first (no execution)
             generated = await create_and_execute_workflow_internal(
                 user_query=user_query,
                 api=api,
@@ -443,11 +444,25 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                 session_id=session_id,
                 workspace_items=workspace_items
             )
-            if "error" in generated:
-                return generated
 
-            workflow_json = generated.get("workflow_json")
+            warnings: List[Dict[str, Any]] = []
+            if isinstance(generated, dict) and generated.get("error"):
+                print('error in generated', file=sys.stderr)
+                print(generated, file=sys.stderr)
+                warnings.append({
+                    "type": generated.get("errorType", "PLANNING_WARNING"),
+                    "message": generated.get("error", "Planning returned a non-fatal error"),
+                    "stage": generated.get("stage", "planning"),
+                    "hint": generated.get("hint"),
+                })
+
+            workflow_json = (
+                generated.get("workflow_json")
+                if isinstance(generated, dict)
+                else None
+            )
             if not workflow_json or not isinstance(workflow_json, dict):
+                print('error in workflow_json', file=sys.stderr)
                 return {
                     "error": "Failed to generate workflow plan payload",
                     "errorType": "GENERATION_FAILED",
@@ -455,31 +470,37 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     "source": "bvbrc-service"
                 }
 
-            # Return the workflow JSON directly with validation notes
-            # The workflow has defaults applied and validation has been run (non-blocking)
+            # Return the planned workflow JSON directly.
             workflow_name = workflow_json.get("workflow_name", "Workflow")
             step_count = len(workflow_json.get("steps", []))
             
-            persisted_workflow_id = generated.get("workflow_id")
-            persisted_status = generated.get("status", "planned")
+            persisted_workflow_id = generated.get("workflow_id") if isinstance(generated, dict) else None
+            persisted_status = generated.get("status", "planned") if isinstance(generated, dict) else "planned"
+            persisted = True
+
+            print('********* persisted_workflow_id *********', file=sys.stderr)
+            print(persisted_workflow_id, file=sys.stderr)
             if not persisted_workflow_id:
-                return {
-                    "error": "Workflow plan was generated but not persisted; no workflow_id was returned",
-                    "errorType": "PLANNING_NOT_PERSISTED",
+                persisted_workflow_id = f"wf_local_{uuid.uuid4().hex[:12]}"
+                persisted_status = "planned"
+                persisted = False
+                warnings.append({
+                    "type": "PLANNING_NOT_PERSISTED",
+                    "message": "Workflow generated but engine did not return workflow_id; assigned local fallback ID",
                     "stage": "planning",
-                    "hint": "Ensure workflow engine planning is enabled and reachable",
-                    "source": "bvbrc-service"
-                }
+                    "hint": "Fix planning/validation issues and re-plan to obtain an engine-registered workflow_id",
+                })
+                workflow_json["workflow_id"] = persisted_workflow_id
+                workflow_json["status"] = persisted_status
 
             result = {
                 "workflow_id": persisted_workflow_id,
                 "status": persisted_status,
+                "persisted": persisted,
                 "workflow_name": workflow_name,
                 "step_count": step_count,
                 "workflow_json": workflow_json,
                 "workflow_description": generated.get("workflow_description"),
-                "ready_for_submission": generated.get("ready_for_submission", True),
-                "validation": generated.get("validation", {}),
                 "call": {
                     "tool": "plan_workflow",
                     "arguments_executed": {
@@ -489,19 +510,11 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
                     },
                     "replayable": True
                 },
+                "message": "Workflow planned and saved. Use submit_workflow(workflow_id=...) to execute.",
+                "warnings": warnings,
                 "source": "bvbrc-service"
             }
-            
-            # Include validation errors and notes if present
-            if "validation_errors" in generated:
-                result["validation_errors"] = generated["validation_errors"]
-                result["message"] = "Workflow planned but has validation errors. Review and fix before submission."
-            else:
-                result["message"] = "Workflow planned and saved. Use submit_workflow(workflow_id=...) to execute."
-            
-            if "validation_notes" in generated:
-                result["validation_notes"] = generated["validation_notes"]
-                
+
             return result
 
         except FileNotFoundError as e:
@@ -531,9 +544,9 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
         """
         Submit a planned/validated workflow for execution.
 
-        This tool submits an already-registered workflow by workflow_id. The workflow
-        should come from plan_workflow(), which validates, assigns workflow_id, and
-        persists the workflow as status='planned'.
+        This tool submits an already-planned workflow by workflow_id. The workflow
+        should come from plan_workflow(), which assigns workflow_id and persists
+        the workflow as status='planned'. Validation is performed during submission.
 
         Args:
             workflow_id: Planned workflow ID (preferred)
@@ -560,7 +573,7 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
 
         Notes:
             - The workflow engine must be running and configured for execution
-            - The workflow must already be validated/registered before submission
+            - The workflow must already be planned/registered before submission
             - Use workflow monitoring tools to track execution progress
             - The workflow_id can be used to query status and retrieve results
 

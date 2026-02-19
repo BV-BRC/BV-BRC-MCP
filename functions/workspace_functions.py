@@ -126,9 +126,10 @@ async def workspace_ls(
                 }
             }
         else:
-            # Non-recursive listing when no file_type filter
+            # Non-recursive listing when no file_type filter.
+            # Workspace.ls expects lowercase "recursive".
             api_params = {
-                "Recursive": False,
+                "recursive": False,
                 "includeSubDirs": False,
                 "paths": paths
             }
@@ -528,6 +529,66 @@ async def workspace_browse(
             }
         }
 
+    def _build_list_response(items: List[dict], result_path: str) -> dict:
+        return {
+            "result": {
+                "items": items,
+                "tool_name": tool_name,
+                "result_type": "list_result",
+                "count": len(items),
+                "path": result_path,
+                "source": "bvbrc-workspace",
+                "ui_grid": _build_grid_payload(
+                    entity_type="workspace_item",
+                    items=items,
+                    result_type="list_result",
+                    source="bvbrc-workspace",
+                    sort={"sort_by": sort_by, "sort_order": sort_order},
+                    pagination={"limit": num_results, "offset": 0, "has_more": None},
+                    columns=[
+                        {"key": "name", "label": "Name", "sortable": True},
+                        {"key": "type", "label": "Type", "sortable": True},
+                        {"key": "creation_time", "label": "Created", "sortable": True},
+                        {"key": "size", "label": "Size", "sortable": True}
+                    ]
+                )
+            },
+            "call": {
+                "tool": tool_name,
+                "backend_method": "Workspace.ls",
+                "arguments_executed": {
+                    "path": result_path,
+                    "search": False,
+                    "file_types": file_types,
+                    "sort_by": sort_by,
+                    "sort_order": sort_order,
+                    "num_results": num_results
+                },
+                "replayable": True
+            }
+        }
+
+    # Handle all public browsing in one branch. Workspace.get can fail for valid
+    # public directories, so prefer Workspace.ls here.
+    if path.startswith("/public"):
+        # Keep /public as-is; requesting "/" can trigger permission errors.
+        list_path = path
+        list_result = await workspace_ls(
+            api=api,
+            paths=[list_path],
+            token=token,
+            file_types=file_types,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=num_results
+        )
+        if "error" in list_result:
+            # Do not fall through to Workspace.get on public listing failures.
+            # Returning the original listing error preserves the real failure cause.
+            return list_result
+        items = list_result.get("items", [])
+        return _build_list_response(items, path)
+
     metadata_result = await workspace_get_object(api, path, metadata_only=True, token=token)
     if "error" in metadata_result:
         return metadata_result
@@ -558,43 +619,7 @@ async def workspace_browse(
 
         items = list_result.get("items", [])
         # Server-side limiting via limit parameter, no client-side slicing needed
-        return {
-            "result": {
-                "items": items,
-                "tool_name": tool_name,
-                "result_type": "list_result",
-                "count": len(items),
-                "path": path,
-                "source": "bvbrc-workspace",
-                "ui_grid": _build_grid_payload(
-                    entity_type="workspace_item",
-                    items=items,
-                    result_type="list_result",
-                    source="bvbrc-workspace",
-                    sort={"sort_by": sort_by, "sort_order": sort_order},
-                    pagination={"limit": num_results, "offset": 0, "has_more": None},
-                    columns=[
-                        {"key": "name", "label": "Name", "sortable": True},
-                        {"key": "type", "label": "Type", "sortable": True},
-                        {"key": "creation_time", "label": "Created", "sortable": True},
-                        {"key": "size", "label": "Size", "sortable": True}
-                    ]
-                )
-            },
-            "call": {
-                "tool": tool_name,
-                "backend_method": "Workspace.ls",
-                "arguments_executed": {
-                    "path": path,
-                    "search": False,
-                    "file_types": file_types,
-                    "sort_by": sort_by,
-                    "sort_order": sort_order,
-                    "num_results": num_results
-                },
-                "replayable": True
-            }
-        }
+        return _build_list_response(items, path)
 
     return {
         "result": {
