@@ -234,9 +234,14 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                                format: Optional[str] = "tsv",
                                token: Optional[str] = None) -> Dict[str, Any]:
         """
-        Query BV-BRC data with structured filters; Solr syntax is handled for you.
+        Query BV-BRC data collections with structured filters; Solr syntax is handled for you.
         
-        ⚠️ WORKFLOW: For natural language queries, ALWAYS call bvbrc_plan_query_collection 
+        USE THIS TOOL FOR:
+        - Specific data queries 
+        - Queries that request specific records, genomes, features, or data from BV-BRC data collections
+        - When you need to retrieve actual data records from BV-BRC databases
+        
+        WORKFLOW: For natural language data queries, ALWAYS call bvbrc_plan_query_collection 
         FIRST to generate parameters. ONLY call this tool directly when you already have 
         structured parameters from the planner or explicitly provided by the user
         
@@ -511,8 +516,11 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         1) select collection
         2) generate validated query arguments
 
-        ⚠️ ALWAYS call this tool FIRST for natural language queries (e.g., "find E. coli genomes", 
-        "show resistant strains"). NEVER manually construct query parameters from natural language.
+        USE THIS TOOL FOR:
+        - Natural language queries requesting specific data
+        - Queries that need to retrieve actual data records from BV-BRC collections
+        
+        ⚠️ ALWAYS call this tool FIRST for natural language data queries. NEVER manually construct query parameters from natural language.
         
         The returned plan contains all parameters needed to call bvbrc_query_collection.
 
