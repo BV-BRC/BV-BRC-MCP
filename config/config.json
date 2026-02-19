@@ -56,5 +56,25 @@
             "retryWrites": true,
             "retryReads": true
         }
+    },
+    "rag_database": {
+        "database_type": "chromadb",
+        "database_path": "./rag_data",
+        "collection_name": "default",
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "top_k_default": 5,
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "database_name": "bvbrc_helpdesk",
+        "score_threshold": 0.0,
+        "summarization_model": {
+            "model": "RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16",
+            "endpoint": "http://mango.cels.anl.gov:8003/v1/chat/completions",
+            "apiKey": "EMPTY",
+            "max_tokens": 1000
+        }
+    },
+    "sra_tools": {
+        "singularity_container": "/vol/patric3/production/containers/ubuntu-027-11.sif"
     }
 }

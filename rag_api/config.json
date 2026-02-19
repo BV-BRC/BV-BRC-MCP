@@ -1,0 +1,13 @@
+{
+  "embedding_url": "http://lambda12.cels.anl.gov:9998/v1/embeddings",
+  "embedding_model": "Salesforce/SFR-Embedding-Mistral",
+  "embedding_apiKey": "BRCMistral",
+  "mongodb_url_holly": "mongodb://140.221.78.15:27017",
+  "mongodb_url": "mongodb://140.221.78.16:27018",
+  "mongodb_database": "copilot",
+  "mongodb_collection": "ragList",
+  "api_title": "RAG Retrieval API",
+  "api_version": "1.0.0",
+  "debug": false
+}
+
