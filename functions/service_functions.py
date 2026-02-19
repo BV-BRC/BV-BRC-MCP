@@ -5,6 +5,7 @@ import uuid
 import json
 import os
 import sys
+import aiohttp
 
 CGA_INPUT_TYPES = {"reads", "contigs", "genbank"}
 CGA_RECIPES = {
@@ -407,9 +408,88 @@ async def start_genome_annotation_app(api: JsonRpcCaller, token: str = None, use
             "source": "bvbrc-service"
         }
 
-async def query_tasks(api: JsonRpcCaller, token: str = None, user_id: str = None, params: Dict[str, Any] = None) -> dict:
+async def query_tasks(
+    api: JsonRpcCaller, 
+    token: str = None, 
+    user_id: str = None, 
+    params: Dict[str, Any] = None,
+    fetch_stdout: bool = False,
+    fetch_stderr: bool = False
+) -> dict:
+    """
+    Query task details and optionally fetch stdout/stderr content.
+    
+    Args:
+        api: JSON RPC caller instance
+        token: Authentication token
+        user_id: User ID
+        params: Dictionary containing 'task_ids' list
+        fetch_stdout: If True, fetch last 100 lines of stdout from task_info endpoint
+        fetch_stderr: If True, fetch last 100 lines of stderr from task_info endpoint
+    
+    Note:
+        Only the last 100 lines of stdout/stderr are returned to keep responses manageable.
+    """
     try:
         result = await api.acall("AppService.query_tasks", [params['task_ids']], _generate_numerical_uuid(), token)
+        
+        # If we need to fetch stdout or stderr, process each task
+        if (fetch_stdout or fetch_stderr) and isinstance(result, list):
+            # Get the base service URL from the api client
+            # The service_url is like: https://p3.theseed.org/services/app_service
+            base_service_url = api.service_url
+            
+            async def fetch_log(session, task_data, log_type, url):
+                """Fetch a single log file and attach only the last 100 lines to the task."""
+                try:
+                    headers = {
+                        'Authorization': f'Oauth {token}',
+                        'X-Requested-With': 'false'
+                    }
+                    async with session.get(url, headers=headers) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            
+                            # Get only the last 100 lines
+                            lines = content.splitlines()
+                            last_100_lines = lines[-100:] if len(lines) > 100 else lines
+                            truncated_content = '\n'.join(last_100_lines)
+                            
+                            task_data[log_type] = truncated_content
+                        else:
+                            task_data[log_type] = f"Error fetching {log_type}: HTTP {response.status}"
+                except Exception as e:
+                    task_data[log_type] = f"Error fetching {log_type}: {str(e)}"
+            
+            # Collect all fetch operations
+            fetch_operations = []
+            async with aiohttp.ClientSession() as session:
+                for task_wrapper in result:
+                    if isinstance(task_wrapper, dict):
+                        # The result structure is: [{'task_id': {task_data}}]
+                        # Get the task_id (key) and task_data (value)
+                        for task_id, task_data in task_wrapper.items():
+                            if not isinstance(task_data, dict):
+                                continue
+                            
+                            # Construct stdout URL: {base_url}/task_info/{task_id}/stdout
+                            if fetch_stdout:
+                                stdout_url = f"{base_service_url}/task_info/{task_id}/stdout"
+                                fetch_operations.append(
+                                    fetch_log(session, task_data, 'stdout', stdout_url)
+                                )
+                            
+                            # Construct stderr URL: {base_url}/task_info/{task_id}/stderr
+                            if fetch_stderr:
+                                stderr_url = f"{base_service_url}/task_info/{task_id}/stderr"
+                                fetch_operations.append(
+                                    fetch_log(session, task_data, 'stderr', stderr_url)
+                                )
+                
+                # Wait for all fetch operations to complete
+                if fetch_operations:
+                    await asyncio.gather(*fetch_operations)
+        
         if isinstance(result, (list, dict)):
             return {
                 "data": result,

@@ -217,13 +217,33 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             }
 
     @mcp.tool(name="get_job_details", annotations={"readOnlyHint": True})
-    async def service_get_job_details(task_ids: Optional[List[Union[str, int]]] = None, token: Optional[str] = None) -> Dict[str, Any]:
+    async def service_get_job_details(
+        task_ids: Optional[List[Union[str, int]]] = None, 
+        token: Optional[str] = None,
+        stdout: bool = False,
+        stderr: bool = False
+    ) -> Dict[str, Any]:
         """
-        Query task details by task IDs.
+        Query task details by task IDs. Use this tool for questions about specific jobs, such as:
+        - Why did a job fail?
+        - What happened during job execution?
+        - What is the current status of a job?
+        - What were the job parameters or results?
+        - Debugging job issues or errors
+
+        This tool returns detailed information about one or more jobs, including status, parameters,
+        execution times, and optionally the stdout/stderr logs for troubleshooting.
 
         Args:
             task_ids: List of task IDs to query (can be strings or numbers)
             token: Authentication token (optional - will use default if not provided)
+            stdout: If True, fetch and include last 100 lines of stdout (default: False). 
+                    Set to True when you need to see what the job printed during execution.
+            stderr: If True, fetch and include last 100 lines of stderr (default: False).
+                    Set to True when debugging job failures or errors.
+        
+        Note:
+            Only the last 100 lines of stdout/stderr are returned to keep responses manageable.
         """
         if not task_ids or not isinstance(task_ids, list):
             return {
@@ -248,7 +268,9 @@ def register_service_tools(mcp: FastMCP, api: JsonRpcCaller, similar_genome_find
             api,
             auth_token,
             user_id=user_id,
-            params={"task_ids": task_ids_str}
+            params={"task_ids": task_ids_str},
+            fetch_stdout=stdout,
+            fetch_stderr=stderr
         )
 
     @mcp.tool(name="list_jobs", annotations={"readOnlyHint": True})
