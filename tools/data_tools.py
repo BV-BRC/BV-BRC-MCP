@@ -9,9 +9,10 @@ import json
 import subprocess
 import os
 import re
+import tempfile
 from typing import Optional, Dict, Any, List
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 
 from functions.data_functions import (
     query_direct,
@@ -34,6 +35,37 @@ from common.llm_client import create_llm_client_from_config
 _base_url = None
 _token_provider = None
 _llm_client = None
+_download_cancel_tokens: Dict[str, bool] = {}
+
+
+def _normalize_cancel_token(cancel_token: Optional[str]) -> str:
+    return str(cancel_token or "").strip()
+
+
+def _mark_download_cancelled(cancel_token: Optional[str]) -> bool:
+    token = _normalize_cancel_token(cancel_token)
+    if not token:
+        return False
+    _download_cancel_tokens[token] = True
+    return True
+
+
+def request_download_cancel(cancel_token: Optional[str]) -> bool:
+    """Public helper for HTTP routes to request cooperative download cancellation."""
+    return _mark_download_cancelled(cancel_token)
+
+
+def _is_download_cancelled(cancel_token: Optional[str]) -> bool:
+    token = _normalize_cancel_token(cancel_token)
+    if not token:
+        return False
+    return bool(_download_cancel_tokens.get(token, False))
+
+
+def _clear_download_cancel_token(cancel_token: Optional[str]) -> None:
+    token = _normalize_cancel_token(cancel_token)
+    if token:
+        _download_cancel_tokens.pop(token, None)
 
 
 def _get_llm_client():
@@ -253,6 +285,33 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             headers = {"Authorization": token}
         return headers
 
+    def _apply_sequence_response_mode_headers(
+        collection: str,
+        headers: Optional[Dict[str, str]],
+        sequence_response_mode: str
+    ) -> Dict[str, str]:
+        """
+        Apply planner-selected sequence response mode by setting API bulk header.
+        Enum intentionally captures both collection and sequence type.
+        """
+        mode = str(sequence_response_mode or "none").strip().lower()
+        out_headers = dict(headers or {})
+        if mode in {"", "none"}:
+            return out_headers
+        if mode == "genome_feature_dna_fasta":
+            if collection != "genome_feature":
+                raise ValueError("genome_feature_dna_fasta is only valid for collection 'genome_feature'")
+            out_headers["http_accept"] = "application/dna+fasta"
+            return out_headers
+        if mode == "genome_feature_protein_fasta":
+            if collection != "genome_feature":
+                raise ValueError("genome_feature_protein_fasta is only valid for collection 'genome_feature'")
+            out_headers["http_accept"] = "application/protein+fasta"
+            return out_headers
+        raise ValueError(
+            "sequence_response_mode must be one of: none, genome_feature_dna_fasta, genome_feature_protein_fasta"
+        )
+
     async def _execute_structured_query(
         collection: str,
         filters: Optional[Dict[str, Any]],
@@ -263,7 +322,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         batchSize: Optional[int],
         num_results: Optional[int],
         result_format: str,
-        token: Optional[str]
+        token: Optional[str],
+        sequence_response_mode: str = "none",
+        cancel_token: Optional[str] = None,
+        ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """Execute a structured single-collection query."""
         options: Dict[str, Any] = {}
@@ -311,56 +373,153 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
             elif batchSize > num_results:
                 batchSize = num_results
 
-        headers = _build_auth_headers(token)
-        if collection == "genome_sequence":
-            if headers is None:
-                headers = {}
-            headers["http_accept"] = "application/dna+fasta"
-
         try:
-            if num_results is not None and not countOnly and (cursorId is None or cursorId == "*"):
-                all_results = []
-                current_cursor = cursorId or "*"
+            headers = _build_auth_headers(token)
+            headers = _apply_sequence_response_mode_headers(
+                collection=collection,
+                headers=headers,
+                sequence_response_mode=sequence_response_mode
+            )
+
+            # Server-side cursor pagination with disk spooling:
+            # fetch pages in batches of 1000 and write each batch to a temp file to avoid
+            # retaining all pages in memory during long-running queries.
+            if not countOnly and (cursorId is None or cursorId == "*"):
+                spool_batch_size = CURSOR_BATCH_SIZE
+                target_results = num_results if num_results is not None else None
                 total_fetched = 0
-                last_page_result = None
+                total_num_found: Optional[int] = None
+                next_cursor_id: Optional[str] = None
+                total_batches = 0
+                cursor = cursorId or "*"
 
-                while total_fetched < num_results:
-                    remaining = num_results - total_fetched
-                    page_batch_size = min(batchSize or CURSOR_BATCH_SIZE, remaining)
-                    page_result = await query_direct(
-                        collection,
-                        filter_str,
-                        options,
-                        _base_url,
-                        headers=headers,
-                        cursorId=current_cursor,
-                        countOnly=False,
-                        batch_size=page_batch_size
-                    )
-                    last_page_result = page_result
-                    page_results = page_result.get("results", [])
-                    if not page_results:
-                        break
+                with tempfile.TemporaryDirectory(prefix="bvbrc_query_spool_") as spool_dir:
+                    jsonl_path = os.path.join(spool_dir, "results.jsonl")
+                    tsv_path = os.path.join(spool_dir, "results.tsv")
+                    wrote_tsv_header = False
 
-                    needed = num_results - total_fetched
-                    all_results.extend(page_results[:needed])
-                    total_fetched += len(page_results[:needed])
+                    while cursor:
+                        if _is_download_cancelled(cancel_token):
+                            return {
+                                "error": "Data download cancelled.",
+                                "errorType": "CANCELLED",
+                                "cancelled": True,
+                                "count": total_fetched,
+                                "numFound": total_num_found if total_num_found is not None else total_fetched,
+                                "source": "bvbrc-mcp-data"
+                            }
+                        if target_results is not None and total_fetched >= target_results:
+                            break
 
-                    next_cursor = page_result.get("nextCursorId")
-                    if total_fetched >= num_results or not next_cursor:
-                        break
-                    current_cursor = next_cursor
+                        if target_results is not None:
+                            remaining = target_results - total_fetched
+                            page_batch_size = min(spool_batch_size, remaining)
+                        else:
+                            page_batch_size = spool_batch_size
 
-                num_found = last_page_result.get("numFound", len(all_results)) if last_page_result else len(all_results)
-                next_cursor_id = last_page_result.get("nextCursorId") if (last_page_result and total_fetched < num_results) else None
-                result = {
-                    "results": all_results,
-                    "count": len(all_results),
-                    "numFound": num_found,
-                    "nextCursorId": next_cursor_id,
-                    "limit": num_results,
-                    "limitReached": total_fetched >= num_results
-                }
+                        page_result = await query_direct(
+                            collection,
+                            filter_str,
+                            options,
+                            _base_url,
+                            headers=headers,
+                            cursorId=cursor,
+                            countOnly=False,
+                            batch_size=page_batch_size
+                        )
+                        page_results = page_result.get("results", [])
+                        if not page_results:
+                            next_cursor_id = None
+                            break
+
+                        if target_results is not None and len(page_results) > (target_results - total_fetched):
+                            page_results = page_results[: target_results - total_fetched]
+
+                        if result_format == "tsv":
+                            conversion_result = convert_json_to_tsv(page_results)
+                            if "error" in conversion_result:
+                                return {
+                                    "error": conversion_result["error"],
+                                    "hint": conversion_result.get("hint", ""),
+                                    "count": total_fetched,
+                                    "numFound": total_num_found if total_num_found is not None else total_fetched,
+                                    "nextCursorId": page_result.get("nextCursorId"),
+                                    "source": "bvbrc-mcp-data"
+                                }
+                            batch_tsv = conversion_result.get("tsv", "")
+                            tsv_lines = [line for line in batch_tsv.splitlines() if line.strip()]
+                            if tsv_lines:
+                                with open(tsv_path, "a", encoding="utf-8") as tsv_file:
+                                    if not wrote_tsv_header:
+                                        tsv_file.write("\n".join(tsv_lines) + "\n")
+                                        wrote_tsv_header = True
+                                    else:
+                                        data_lines = tsv_lines[1:] if len(tsv_lines) > 1 else []
+                                        if data_lines:
+                                            tsv_file.write("\n".join(data_lines) + "\n")
+                        else:
+                            with open(jsonl_path, "a", encoding="utf-8") as jsonl_file:
+                                for row in page_results:
+                                    jsonl_file.write(json.dumps(row, ensure_ascii=False))
+                                    jsonl_file.write("\n")
+
+                        total_batches += 1
+                        total_fetched += len(page_results)
+                        total_num_found = page_result.get("numFound", total_num_found)
+                        next_cursor = page_result.get("nextCursorId")
+                        next_cursor_id = next_cursor
+
+                        print(
+                            f"[search_data_progress] collection={collection} batch={total_batches} "
+                            f"fetched={total_fetched} numFound={total_num_found} "
+                            f"hasNextCursor={bool(next_cursor)}"
+                        )
+                        if ctx is not None:
+                            progress_total = float(target_results) if target_results is not None else (
+                                float(total_num_found) if total_num_found is not None else None
+                            )
+                            await ctx.report_progress(
+                                progress=float(total_fetched),
+                                total=progress_total,
+                                message=(
+                                    f"Fetched {total_fetched} records"
+                                    f" (batch {total_batches}, collection={collection})"
+                                )
+                            )
+
+                        if not next_cursor:
+                            break
+                        cursor = next_cursor
+
+                    result = {
+                        "count": total_fetched,
+                        "numFound": total_num_found if total_num_found is not None else total_fetched,
+                        "nextCursorId": next_cursor_id if (target_results is not None and total_fetched >= target_results) else None,
+                        "_paginationInfo": {
+                            "totalBatches": total_batches,
+                            "batchSize": spool_batch_size,
+                            "spooledToTempFiles": True
+                        }
+                    }
+                    if target_results is not None:
+                        result["limit"] = target_results
+                        result["limitReached"] = total_fetched >= target_results
+
+                    if result_format == "tsv":
+                        if os.path.exists(tsv_path):
+                            with open(tsv_path, "r", encoding="utf-8") as tsv_file:
+                                result["tsv"] = tsv_file.read()
+                        else:
+                            result["tsv"] = ""
+                    else:
+                        merged_results: List[Dict[str, Any]] = []
+                        if os.path.exists(jsonl_path):
+                            with open(jsonl_path, "r", encoding="utf-8") as jsonl_file:
+                                for line in jsonl_file:
+                                    text = line.strip()
+                                    if text:
+                                        merged_results.append(json.loads(text))
+                        result["results"] = merged_results
             else:
                 result = await query_direct(
                     collection,
@@ -373,7 +532,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                     batch_size=batchSize
                 )
 
-            if result_format == "tsv" and not countOnly:
+            if result_format == "tsv" and not countOnly and "results" in result:
                 conversion_result = convert_json_to_tsv(result.get("results", []))
                 if "error" in conversion_result:
                     return {
@@ -420,50 +579,35 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         print("Fetching available collections.")
         return list_solr_collections()
 
-    @mcp.tool(annotations={"readOnlyHint": True})
+    @mcp.tool(annotations={"readOnlyHint": True, "streamingHint": True})
     async def bvbrc_search_data(
         user_query: str,
         advanced: bool = False,
-        search_mode: str = "phrase",
-        format: str = "tsv",
-        limit: Optional[int] = None,
-        cursorId: Optional[str] = None,
-        countOnly: bool = False,
-        batchSize: Optional[int] = None,
-        num_results: Optional[int] = None,
-        token: Optional[str] = None
+        cancel_token: Optional[str] = None,
+        stream: bool = False,
+        token: Optional[str] = None,
+        ctx: Context = None
     ) -> Dict[str, Any]:
         """
         Unified natural-language data search tool for BV-BRC.
 
         Default behavior (`advanced=False`) is exploratory global search:
         - Select a likely collection with internal LLM routing
-        - Execute a q= search using phrase/and/or semantics
+        - Execute a q= search using AND semantics
 
         Advanced behavior (`advanced=True`) is targeted retrieval:
         - Plan a structured query from user_query
         - Execute the resulting single-collection query with validated fields
-        - Supports countOnly, batchSize, and num_results controls
+        - Pagination/result controls are determined internally by the planner
 
         Args:
             user_query: Natural language query text or keyword list.
             advanced: False (default) for global discovery; True for targeted structured query execution.
-            search_mode: Global mode only. One of "phrase", "and", "or".
-            format: Output format, "tsv" (default) or "json".
-            limit: Optional max results. In global mode limits one page; in advanced mode maps to num_results when num_results is not provided.
-            cursorId: Optional cursor for pagination. Use "*" or omit for first page.
-            countOnly: Advanced mode only. Return only total count.
-            batchSize: Advanced mode only. Rows per page (1-10000).
-            num_results: Advanced mode only. Total results target across cursor pages.
+            cancel_token: Internal cancellation token (set by API, not user-facing).
+            stream: Internal transport flag used by API/MCP streaming pipeline.
             token: Authentication token (optional, auto-detected if token_provider is configured).
         """
-        # FOR TESTING: Force advanced to False
-        advanced = False
-        # FOR TESTING: Force search_mode to 'and'
-        search_mode = 'and'
-        # FOR TESTING: Force TSV output
-        format = "tsv"
-        
+        normalized_cancel_token = _normalize_cancel_token(cancel_token)
         if not user_query or not str(user_query).strip():
             return {
                 "error": "user_query parameter is required",
@@ -472,39 +616,21 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 "source": "bvbrc-mcp-data"
             }
 
-        if format not in ["json", "tsv"]:
-            return {
-                "error": f"Invalid format: {format}. Must be 'json' or 'tsv'.",
-                "errorType": "INVALID_PARAMETERS",
-                "source": "bvbrc-mcp-data"
-            }
-
-        if limit is not None and (limit < 1 or limit > 10000):
-            return {
-                "error": f"Invalid limit: {limit}. Must be between 1 and 10000.",
-                "errorType": "INVALID_PARAMETERS",
-                "source": "bvbrc-mcp-data"
-            }
+        # This is here intentionally to disable advanced mode. We will remove this once we have a proper advanced mode.
+        advanced = False
 
         query_text = str(user_query).strip()
         if not advanced:
-            if countOnly or batchSize is not None or num_results is not None:
-                return {
-                    "error": "countOnly, batchSize, and num_results are only supported when advanced=true.",
-                    "errorType": "INVALID_PARAMETERS",
-                    "source": "bvbrc-mcp-data"
-                }
-
             if _contains_solr_syntax(query_text):
                 return {
                     "error": "user_query appears to contain Solr syntax, which is not allowed for this tool.",
                     "errorType": "INVALID_PARAMETERS",
-                    "hint": "Provide natural language or plain keywords only. Use search_mode for phrase/and/or behavior.",
+                    "hint": "Provide natural language or plain keywords only.",
                     "source": "bvbrc-mcp-data"
                 }
 
             try:
-                search_info = _build_global_search_q_expr(query_text, search_mode)
+                search_info = _build_global_search_q_expr(query_text, "and")
                 llm_client = _get_llm_client()
                 selection = select_collection_for_query(query_text, llm_client)
                 collection = str(selection.get("collection", "")).strip()
@@ -521,40 +647,35 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                     q_expr = f"({q_expr}) AND patric_id:*"
 
                 headers = _build_auth_headers(token)
-                page_size = min(limit, CURSOR_BATCH_SIZE) if limit is not None else CURSOR_BATCH_SIZE
                 result = await query_direct(
                     core=collection,
                     filter_str=q_expr,
                     options={},
                     base_url=_base_url,
                     headers=headers,
-                    cursorId=cursorId,
+                    cursorId=None,
                     countOnly=False,
-                    batch_size=page_size
+                    batch_size=CURSOR_BATCH_SIZE
                 )
-                if limit is not None:
-                    result["limit"] = limit
-                    result["limitReached"] = bool(result.get("count", 0) >= limit)
 
-                if format == "tsv":
-                    conversion_result = convert_json_to_tsv(result.get("results", []))
-                    if "error" in conversion_result:
-                        return {
-                            "error": conversion_result["error"],
-                            "hint": conversion_result.get("hint", ""),
-                            "collection": collection,
-                            "selection": selection,
-                            "searchMode": search_info.get("searchMode"),
-                            "keywords": search_info.get("keywords", []),
-                            "q": q_expr,
-                            "results": result.get("results", []),
-                            "count": result.get("count"),
-                            "numFound": result.get("numFound"),
-                            "nextCursorId": result.get("nextCursorId"),
-                            "source": "bvbrc-mcp-data"
-                        }
-                    del result["results"]
-                    result["tsv"] = conversion_result["tsv"]
+                conversion_result = convert_json_to_tsv(result.get("results", []))
+                if "error" in conversion_result:
+                    return {
+                        "error": conversion_result["error"],
+                        "hint": conversion_result.get("hint", ""),
+                        "collection": collection,
+                        "selection": selection,
+                        "searchMode": search_info.get("searchMode"),
+                        "keywords": search_info.get("keywords", []),
+                        "q": q_expr,
+                        "results": result.get("results", []),
+                        "count": result.get("count"),
+                        "numFound": result.get("numFound"),
+                        "nextCursorId": result.get("nextCursorId"),
+                        "source": "bvbrc-mcp-data"
+                    }
+                del result["results"]
+                result["tsv"] = conversion_result["tsv"]
 
                 result["collection"] = collection
                 result["selection"] = selection
@@ -596,18 +717,20 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                     "source": "bvbrc-mcp-data"
                 }
 
-            effective_num_results = num_results if num_results is not None else limit
             result = await _execute_structured_query(
                 collection=collection,
                 filters=plan.get("filters"),
                 select=plan.get("select"),
                 sort=plan.get("sort"),
-                cursorId=cursorId if cursorId is not None else plan.get("cursorId"),
-                countOnly=countOnly if countOnly else bool(plan.get("countOnly", False)),
-                batchSize=batchSize if batchSize is not None else plan.get("batchSize"),
-                num_results=effective_num_results if effective_num_results is not None else plan.get("num_results"),
-                result_format=format if format is not None else plan.get("format", "json"),
-                token=token
+                cursorId=plan.get("cursorId"),
+                countOnly=bool(plan.get("countOnly", False)),
+                batchSize=plan.get("batchSize"),
+                num_results=plan.get("num_results"),
+                result_format=plan.get("format", "tsv"),
+                token=token,
+                sequence_response_mode=plan.get("sequence_response_mode", "none"),
+                cancel_token=normalized_cancel_token,
+                ctx=ctx,
             )
 
             if "error" in result:
@@ -615,7 +738,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
 
             result["mode"] = "advanced"
             result["selection"] = planning_result.get("selection", {})
-            result["plan"] = plan
+            # Keep planner internals private from tool consumers.
+            plan_for_response = dict(plan)
+            plan_for_response.pop("sequence_response_mode", None)
+            result["plan"] = plan_for_response
             return result
         except FileNotFoundError as e:
             return {
@@ -630,6 +756,9 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 "errorType": "SEARCH_FAILED",
                 "source": "bvbrc-mcp-data"
             }
+        finally:
+            # Prevent unbounded growth of token registry.
+            _clear_download_cancel_token(normalized_cancel_token)
 
     # @mcp.tool(annotations={"readOnlyHint": True})
     async def bvbrc_get_feature_sequence_by_id(patric_ids: List[str], 

@@ -17,7 +17,7 @@
     identity (integer)
     organism (string)
     owner (string)
-    patric_id (string) - Note: follows pattern fig|XXXX.X.peg.X
+    patric_id (string) - Unique genome_feature identifier; follows pattern fig|XXXXXXX.X.peg.X
     pmid (array of strings)
     product (string)
     property (string)

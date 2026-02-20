@@ -69,6 +69,10 @@ class AppConfig:
             "workspace_url",
             "https://p3.theseed.org/services/Workspace"
         )
+        self.workspace_timeout_seconds = config.get(
+            "workspace_timeout_seconds",
+            120  # Default 2 minutes for workspace operations
+        )
         self.service_api_url = config.get(
             "service_api_url",
             "https://p3.theseed.org/services/app_service"

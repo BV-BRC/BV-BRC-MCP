@@ -18,7 +18,7 @@
     pathway_ec (string)
     pathway_id (string)
     pathway_name (case insensitive string)
-    patric_id (string) - Note: follows pattern fig|XXXX.X.peg.X
+    patric_id (string) - Unique genome_feature identifier; follows pattern fig|XXXXXXX.X.peg.X
     product (case insensitive string)
     public (boolean)
     refseq_locus_tag (string)

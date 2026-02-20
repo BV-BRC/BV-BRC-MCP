@@ -26,7 +26,7 @@
     other_ids (array of strings)
     other_value (number)
     p_value (number)
-    patric_id (string) - Note: follows pattern fig|XXXX.X.peg.X
+    patric_id (string) - Unique genome_feature identifier; follows pattern fig|XXXXXXX.X.peg.X
     product (case insensitive string)
     protein_id (string)
     result_type (case insensitive string)

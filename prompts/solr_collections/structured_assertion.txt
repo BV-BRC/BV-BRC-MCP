@@ -7,7 +7,7 @@
     feature_id (string)
     id (string)
     owner (string)
-    patric_id (string) - Note: follows pattern fig|XXXX.X.peg.X
+    patric_id (string) - Unique genome_feature identifier; follows pattern fig|XXXXXXX.X.peg.X
     pmid (string)
     property (string)
     public (boolean)

@@ -24,6 +24,11 @@ SOLR_QUERY_TIMEOUT = 300.0
 MAX_RETRIES = 3
 # Base seconds for exponential backoff during retries
 RETRY_BACKOFF_BASE = 1.0
+SEQUENCE_RESPONSE_MODE_VALUES = {
+    "none",
+    "genome_feature_dna_fasta",
+    "genome_feature_protein_fasta",
+}
 
 
 
@@ -85,7 +90,8 @@ def create_bvbrc_client(base_url: str = None, headers: Dict[str, str] = None) ->
 async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] = None,
                 base_url: str = None, headers: Dict[str, str] = None,
                 cursorId: str | None = None, countOnly: bool = False,
-                batch_size: Optional[int] = None) -> Dict[str, Any]:
+                batch_size: Optional[int] = None,
+                solr_request_format: Optional[str] = None) -> Dict[str, Any]:
     """
     Query BV-BRC data directly using core name and filter string with cursor-based pagination.
     
@@ -102,6 +108,7 @@ async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] 
         cursorId: Cursor ID for pagination (optional, use "*" or None for first page)
         countOnly: If True, return only the total count without fetching documents
         batch_size: Number of rows to return per page (optional, defaults to CURSOR_BATCH_SIZE=1000)
+        solr_request_format: Solr request body format ("form" or "json")
         
     Returns:
         Dict with keys depending on countOnly:
@@ -134,6 +141,8 @@ async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] 
         context_overrides["base_url"] = base_url
     if headers:
         context_overrides["headers"] = headers
+    if solr_request_format:
+        context_overrides["request_format"] = solr_request_format
     
     options = options or {}
     
@@ -174,15 +183,37 @@ async def query_direct(core: str, filter_str: str = "", options: Dict[str, Any] 
                     if pager.headers:
                         print(f"[query_direct] Solr headers: {list(pager.headers.keys())}")
                     
-                    result = await solr_select(
-                        pager.collection,
-                        params,
-                        client=client._http_client,
-                        base_url=pager.base_url,
-                        headers=pager.headers,
-                        auth=pager.auth,
-                        timeout=pager.timeout,
-                    )
+                    select_kwargs: Dict[str, Any] = {
+                        "client": client._http_client,
+                        "base_url": pager.base_url,
+                        "headers": pager.headers,
+                        "auth": pager.auth,
+                        "timeout": pager.timeout,
+                    }
+                    if solr_request_format:
+                        select_kwargs["request_format"] = solr_request_format
+
+                    try:
+                        result = await solr_select(
+                            pager.collection,
+                            params,
+                            **select_kwargs,
+                        )
+                    except TypeError as e:
+                        # Backward compatibility: older bvbrc_solr_api builds may not
+                        # support the request_format keyword.
+                        if (
+                            "unexpected keyword argument 'request_format'" in str(e)
+                            and "request_format" in select_kwargs
+                        ):
+                            select_kwargs.pop("request_format", None)
+                            result = await solr_select(
+                                pager.collection,
+                                params,
+                                **select_kwargs,
+                            )
+                        else:
+                            raise
                     
                     response = result.get("response", {})
                     docs: List[Dict[str, Any]] = response.get("docs", [])
@@ -463,6 +494,18 @@ def _sanitize_query_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     if output_format not in ("json", "tsv"):
         raise ValueError("format must be 'json' or 'tsv'")
 
+    sequence_response_mode = str(plan.get("sequence_response_mode", "none")).strip().lower()
+    if sequence_response_mode in {"", "default", "auto"}:
+        sequence_response_mode = "none"
+    if sequence_response_mode not in SEQUENCE_RESPONSE_MODE_VALUES:
+        raise ValueError(
+            "sequence_response_mode must be one of: none, genome_feature_dna_fasta, genome_feature_protein_fasta"
+        )
+    if sequence_response_mode.startswith("genome_feature_") and collection != "genome_feature":
+        raise ValueError(
+            f"sequence_response_mode '{sequence_response_mode}' is only valid for collection 'genome_feature'"
+        )
+
     # Validate fields in structured filters against the selected collection.
     allowed_fields = set(get_collection_fields(collection))
     invalid_fields = validate_filter_fields(filters, allowed_fields) if filters else []
@@ -476,6 +519,7 @@ def _sanitize_query_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
         "filters": filters,
         "countOnly": count_only,
         "format": output_format,
+        "sequence_response_mode": sequence_response_mode,
     }
     if select:
         sanitized["select"] = select
@@ -564,6 +608,7 @@ Return ONLY a JSON object with:
 - num_results (optional integer: total limit on results across all pages)
 - countOnly
 - format
+- sequence_response_mode (enum: "none", "genome_feature_dna_fasta", "genome_feature_protein_fasta")
 - assumptions (optional list)
 - questions_for_user (optional list)
 
@@ -572,7 +617,10 @@ Constraints:
 - No multi-step or cross-collection planning
 - Use structured filters, never raw Solr syntax
 - Keep select concise and relevant
-- If user wants a specific number of results, set num_results to that limit"""
+- If user wants a specific number of results, set num_results to that limit
+- Default sequence_response_mode to "none"
+- Use sequence_response_mode="genome_feature_dna_fasta" when user asks for nucleotide/DNA FASTA sequences from genome_feature
+- Use sequence_response_mode="genome_feature_protein_fasta" when user asks for amino acid/protein FASTA sequences from genome_feature"""
 
     if validation_error:
         user_prompt += f"""

@@ -29,6 +29,7 @@ except FileNotFoundError:
 # Get configuration values
 base_url = config.get("base_url", "https://www.bv-brc.org/api-bulk")
 workspace_api_url = config.get("workspace_url", "https://p3.theseed.org/services/Workspace")
+workspace_timeout = config.get("workspace_timeout_seconds", 120)
 service_api_url = config.get("service_api_url", "https://p3.theseed.org/services/app_service")
 similar_genome_finder_api_url = config.get("similar_genome_finder_api_url", service_api_url)
 file_utilities_config = config.get("file_utilities", {})
@@ -38,8 +39,9 @@ rag_database_config = config.get("rag_database", {})
 # In STDIO mode, token comes from KB_AUTH_TOKEN environment variable
 token_provider = TokenProvider(mode="stdio")
 
-# Initialize the JSON-RPC callers
-workspace_api = JsonRpcCaller(workspace_api_url)
+# Initialize the JSON-RPC callers with configurable timeouts
+# Workspace operations can be slow, so use longer timeout
+workspace_api = JsonRpcCaller(workspace_api_url, timeout=workspace_timeout)
 service_api = JsonRpcCaller(service_api_url)
 similar_genome_finder_api = JsonRpcCaller(similar_genome_finder_api_url)
 

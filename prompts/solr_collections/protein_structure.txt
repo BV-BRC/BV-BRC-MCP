@@ -11,7 +11,7 @@
     institution (string)
     method (array of strings)
     organism_name (array of case insensitive strings)
-    patric_id (string) - Note: follows pattern fig|XXXX.X.peg.X
+    patric_id (string) - Unique genome_feature identifier; follows pattern fig|XXXXXXX.X.peg.X
     pdb_id (string)
     pmid (array of strings)
     product (array of strings)

@@ -993,7 +993,9 @@ async def workspace_upload(api: JsonRpcCaller, filename: str, upload_dir: str = 
 
             # Upload the file to the upload URL
             print(f"Uploading file to {upload_url}")
-            upload_result = _upload_file_to_url(filename, upload_url, token)
+            # Use the same timeout as the API client for consistency
+            upload_timeout = getattr(api, 'timeout', 120.0)
+            upload_result = _upload_file_to_url(filename, upload_url, token, timeout=upload_timeout)
             print(f"Upload result: {upload_result}")
             if upload_result.get("success"):
                 msg["upload_status"] = "success"
@@ -1035,7 +1037,7 @@ async def _workspace_create(api: JsonRpcCaller, objects: list, token: str, creat
     except Exception as e:
         return [f"Error creating workspace object: {str(e)}"]
 
-def _upload_file_to_url(filename: str, upload_url: str, token: str) -> dict:
+def _upload_file_to_url(filename: str, upload_url: str, token: str, timeout: float = 120.0) -> dict:
     """
     Upload a file to the specified Shock API URL using binary data.
 
@@ -1043,6 +1045,7 @@ def _upload_file_to_url(filename: str, upload_url: str, token: str) -> dict:
         filename: Path to the file to upload
         upload_url: The upload URL from workspace API
         token: Authentication token for API calls
+        timeout: Request timeout in seconds (default: 120.0)
     Returns:
         Dictionary with upload result status and message
     """
@@ -1067,7 +1070,7 @@ def _upload_file_to_url(filename: str, upload_url: str, token: str) -> dict:
             }
 
             # Make the POST request with multipart form data
-            response = requests.put(upload_url, files=files, headers=headers, timeout=30)
+            response = requests.put(upload_url, files=files, headers=headers, timeout=timeout)
 
         if response.status_code == 200:
             return {

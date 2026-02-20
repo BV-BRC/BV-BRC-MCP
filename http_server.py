@@ -7,7 +7,7 @@ This server consolidates the data, service, and workspace MCP servers into a sin
 
 from fastmcp import FastMCP
 from common.json_rpc import JsonRpcCaller
-from tools.data_tools import register_data_tools
+from tools.data_tools import register_data_tools, request_download_cancel
 from tools.service_tools import register_service_tools
 from tools.workspace_tools import register_workspace_tools
 from tools.rag_database_tools import register_rag_database_tools
@@ -34,8 +34,9 @@ mcp_url = config.mcp_url
 # Initialize token provider for HTTP mode
 token_provider = TokenProvider(mode="http")
 
-# Initialize the JSON-RPC callers
-workspace_api = JsonRpcCaller(workspace_api_url)
+# Initialize the JSON-RPC callers with configurable timeouts
+# Workspace operations can be slow, so use longer timeout
+workspace_api = JsonRpcCaller(workspace_api_url, timeout=config.workspace_timeout_seconds)
 service_api = JsonRpcCaller(service_api_url)
 similar_genome_finder_api = JsonRpcCaller(similar_genome_finder_api_url)
 
@@ -135,6 +136,35 @@ async def oauth2_token_route(request):
     Retrieves the stored user token using the authorization code.
     """
     return await oauth.oauth2_token(request)
+
+
+@mcp.custom_route("/mcp/cancel-data-download", methods=["POST"])
+async def cancel_data_download_route(request) -> JSONResponse:
+    """
+    Cancel an in-flight data download by cooperative cancel token.
+    Intended for internal API use when a user aborts a running job.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    cancel_token = str((payload or {}).get("cancel_token", "")).strip()
+    if not cancel_token:
+        return JSONResponse(
+            {"ok": False, "error": "cancel_token is required"},
+            status_code=400
+        )
+
+    accepted = request_download_cancel(cancel_token)
+    return JSONResponse(
+        {
+            "ok": bool(accepted),
+            "cancel_token": cancel_token,
+            "message": "Cancellation requested" if accepted else "Cancellation token rejected"
+        },
+        status_code=200 if accepted else 400
+    )
 
 def main() -> int:
     print(f"Starting BVBRC Consolidated MCP Server on port {port}...", file=sys.stderr)

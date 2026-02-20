@@ -14,6 +14,7 @@ Rules:
 6. Focus on domain-specific biological/scientific terms in the query.
 7. Ignore common conversational words like "from", "the", "a", "an", "in", "on", "at", "to", "for", "with", "by", etc.
 8. Base your collection selection only on meaningful scientific keywords and entities.
+9. ID interpretation rule: values matching pattern fig|XXXXXXX.X.peg.X are PATRIC feature IDs (patric_id), i.e. unique genome_feature identifiers; do not interpret these as accession IDs.
 
 Output format:
 {

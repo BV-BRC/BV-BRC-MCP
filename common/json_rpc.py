@@ -8,15 +8,16 @@ import sys
 class JsonRpcCaller:
     """A minimal, generic JSON-RPC caller class."""
     
-    def __init__(self, service_url: str):
+    def __init__(self, service_url: str, timeout: float = 30.0):
         """
         Initialize the JSON-RPC caller with service URL and authentication token.
         
         Args:
             service_url: The base URL for the service API
-            token: Authentication token for API calls
+            timeout: Request timeout in seconds (default: 30.0)
         """
         self.service_url = service_url.rstrip('/')
+        self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/jsonrpc+json'
@@ -77,7 +78,7 @@ class JsonRpcCaller:
             response = self.session.post(
                 self.service_url,
                 data=json.dumps(payload),
-                timeout=30
+                timeout=self.timeout
             )
             response.raise_for_status()
             
@@ -161,7 +162,7 @@ class JsonRpcCaller:
             headers['Authorization'] = f'{token}'
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     self.service_url,
                     content=json.dumps(payload),

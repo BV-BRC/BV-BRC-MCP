@@ -17,7 +17,7 @@
     figfam_id (string)
     gene (case insensitive string)
     gene_id (number)
-    genome_id (string)
+    genome_id (string) - Unique genome feature identifier; follows pattern 208964.12, 83332.12, etc
     genome_name (case insensitive string)
     go (array of case insensitive strings)
     location (string)
@@ -27,7 +27,7 @@
     og_id (string)
     owner (string)
     p2_feature_id (number)
-    patric_id (string) - Note: follows pattern fig|XXXX.X.peg.X
+    patric_id (string) - Unique genome_feature identifier; follows pattern fig|XXXXXXX.X.peg.X
     pdb_accession (array of strings)
     pgfam_id (string)
     plfam_id (string)
