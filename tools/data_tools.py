@@ -113,7 +113,7 @@ STOPWORDS = {
 
 # Custom domain-specific stopwords to exclude
 CUSTOM_STOPWORDS = {
-    "genomes", "subtype", "year"
+    "genomes", "genome", "subtype", "year", "id", "summary"
 }
 
 
