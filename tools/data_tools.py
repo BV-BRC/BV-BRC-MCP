@@ -683,6 +683,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 result["keywords"] = search_info.get("keywords", [])
                 result["q"] = q_expr
                 result["mode"] = "global"
+                result["data_api_base_url"] = _base_url
                 result["source"] = "bvbrc-mcp-data"
                 return result
             except Exception as e:
@@ -737,6 +738,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 return result
 
             result["mode"] = "advanced"
+            result["data_api_base_url"] = _base_url
             result["selection"] = planning_result.get("selection", {})
             # Keep planner internals private from tool consumers.
             plan_for_response = dict(plan)
