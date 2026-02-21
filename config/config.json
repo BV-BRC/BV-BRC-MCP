@@ -19,8 +19,8 @@
         "authorization_code_expires_in_seconds": 3600
     },
     "llm": {
-        "endpoint": "http://mango.cels.anl.gov:8004/v1/chat/completions",
-        "model": "RedHatAI/Llama-4-Scout-17B-16E-Instruct",
+        "endpoint": "http://coconut.cels.anl.gov:8003/v1/chat/completions",
+        "model": "RedHatAI/Llama-4-Scout-17B-16E-Instruct-FP8-dynamic",
         "api_key": "EMPTY",
         "temperature": 0.7,
         "max_tokens": 4000,

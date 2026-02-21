@@ -10,6 +10,7 @@ import subprocess
 import os
 import re
 import tempfile
+from urllib.parse import unquote_plus
 from typing import Optional, Dict, Any, List
 
 from fastmcp import FastMCP, Context
@@ -36,6 +37,14 @@ _base_url = None
 _token_provider = None
 _llm_client = None
 _download_cancel_tokens: Dict[str, bool] = {}
+
+
+def _clip_log_text(text: Any, max_len: int = 180) -> str:
+    """Keep debug log fields concise and single-line."""
+    s = str(text or "").replace("\n", " ").strip()
+    if len(s) <= max_len:
+        return s
+    return f"{s[:max_len]}..."
 
 
 def _normalize_cancel_token(cancel_token: Optional[str]) -> str:
@@ -113,7 +122,7 @@ STOPWORDS = {
 
 # Custom domain-specific stopwords to exclude
 CUSTOM_STOPWORDS = {
-    "genomes", "genome", "subtype", "year", "id", "summary", "bv-brc"
+    "genomes", "genome", "subtype", "year", "id", "summary", "bv-brc", "taxa", "bvbrc"
 }
 
 
@@ -125,6 +134,9 @@ def _tokenize_keywords(text: str) -> List[str]:
     """
     if not text:
         return []
+    # Decode URL-encoded query text so stopword filtering works for inputs like
+    # "genome%20208964.12" and "genome+208964.12".
+    text = unquote_plus(str(text))
 
     # Combine all stopwords
     all_stopwords = STOPWORDS | CUSTOM_STOPWORDS
@@ -229,7 +241,17 @@ def _build_rql_keyword_query(keywords: List[str]) -> str:
     Build an RQL keyword query that mirrors the sanitized keyword intent.
     Do not include paging controls; replay clients can apply them separately.
     """
-    keyword_text = " ".join(str(term).strip() for term in (keywords or []) if str(term).strip())
+    # Defensive sanitization: callers may accidentally pass raw user text or
+    # mixed keyword fragments. Normalize back through tokenizer to enforce
+    # stopword stripping before constructing replayable RQL.
+    if isinstance(keywords, str):
+        normalized_keywords = _tokenize_keywords(keywords)
+    elif isinstance(keywords, (list, tuple)):
+        combined = ", ".join(str(term).strip() for term in keywords if str(term).strip())
+        normalized_keywords = _tokenize_keywords(combined)
+    else:
+        normalized_keywords = []
+    keyword_text = " ".join(str(term).strip() for term in normalized_keywords if str(term).strip())
     safe_keyword_text = keyword_text.replace(")", "\\)")
     return f"keyword({safe_keyword_text})"
 
@@ -680,6 +702,17 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
 
             try:
                 search_info = _build_global_search_q_expr(query_text)
+                sanitized_keywords = _tokenize_keywords(", ".join(search_info.get("keywords", [])))
+                rql_query = _build_rql_keyword_query(sanitized_keywords)
+                rql_replay_query = f"?{rql_query}&limit(100)"
+                print(
+                    "[bvbrc_search_data:rql] "
+                    f"query='{_clip_log_text(query_text)}' "
+                    f"raw_keywords={search_info.get('keywords', [])} "
+                    f"sanitized_keywords={sanitized_keywords} "
+                    f"rql='{rql_query}' "
+                    f"replay='{rql_replay_query}'"
+                )
                 llm_client = _get_llm_client()
                 selection = select_collection_for_query(query_text, llm_client)
                 print(f"[bvbrc_search_data] Planning output (global mode): {json.dumps(selection, indent=2)}")
@@ -718,9 +751,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                         "collection": collection,
                         "selection": selection,
                         "searchMode": search_info.get("searchMode"),
-                        "keywords": search_info.get("keywords", []),
+                        "keywords": sanitized_keywords,
                         "q": q_expr,
-                        "rql_query": _build_rql_keyword_query(search_info.get("keywords", [])),
+                        "rql_query": rql_query,
+                        "rql_replay_query": rql_replay_query,
                         "mode": "global",
                         "data_api_base_url": _base_url,
                         "source": "bvbrc-mcp-data"
@@ -789,16 +823,16 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
 
                 conversion_result = convert_json_to_tsv(result.get("results", []))
                 if "error" in conversion_result:
-                    rql_query = _build_rql_keyword_query(search_info.get("keywords", []))
                     return {
                         "error": conversion_result["error"],
                         "hint": conversion_result.get("hint", ""),
                         "collection": collection,
                         "selection": selection,
                         "searchMode": search_info.get("searchMode"),
-                        "keywords": search_info.get("keywords", []),
+                        "keywords": sanitized_keywords,
                         "q": q_expr,
                         "rql_query": rql_query,
+                        "rql_replay_query": rql_replay_query,
                         "results": result.get("results", []),
                         "count": result.get("count"),
                         "numFound": result.get("numFound"),
@@ -811,9 +845,10 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 result["collection"] = collection
                 result["selection"] = selection
                 result["searchMode"] = search_info.get("searchMode")
-                result["keywords"] = search_info.get("keywords", [])
+                result["keywords"] = sanitized_keywords
                 result["q"] = q_expr
-                result["rql_query"] = _build_rql_keyword_query(search_info.get("keywords", []))
+                result["rql_query"] = rql_query
+                result["rql_replay_query"] = rql_replay_query
                 result["mode"] = "global"
                 result["data_api_base_url"] = _base_url
                 result["source"] = "bvbrc-mcp-data"
