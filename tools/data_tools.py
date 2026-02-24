@@ -19,7 +19,6 @@ from functions.data_functions import (
     query_direct,
     lookup_parameters,
     list_solr_collections,
-    normalize_select,
     normalize_sort,
     build_filter,
     get_collection_fields,
@@ -37,6 +36,37 @@ _base_url = None
 _token_provider = None
 _llm_client = None
 _download_cancel_tokens: Dict[str, bool] = {}
+_default_select_by_collection: Optional[Dict[str, List[str]]] = None
+
+
+def _load_default_select_by_collection() -> Dict[str, List[str]]:
+    """Load data.default_select_by_collection from config.json. Cached on first call."""
+    global _default_select_by_collection
+    if _default_select_by_collection is not None:
+        return _default_select_by_collection
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "config",
+        "config.json"
+    )
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        data_config = config.get("data") or {}
+        _default_select_by_collection = dict(data_config.get("default_select_by_collection") or {})
+    except Exception:
+        _default_select_by_collection = {}
+    return _default_select_by_collection
+
+
+def _get_select_fields_for_collection(collection: str) -> Optional[List[str]]:
+    """
+    Return the configured default fields for a collection, or None (all fields).
+    Ignores LLM/user select; config is the sole source of truth.
+    """
+    defaults = _load_default_select_by_collection()
+    fields = defaults.get(collection)
+    return list(fields) if fields else None
 
 
 def _clip_log_text(text: Any, max_len: int = 180) -> str:
@@ -117,13 +147,19 @@ STOPWORDS = {
     "being", "have", "has", "had", "do", "does", "did", "will", "would", 
     "should", "could", "may", "might", "must", "can", "this", "that", 
     "these", "those", "i", "you", "he", "she", "it", "we", "they", "what",
-    "which", "who", "when", "where", "why", "how", "count", "counts", "total", "number"
+    "which", "who", "when", "where", "why", "how", "count", "counts", "total", "number",
+    "type", "types"
 }
 
 # Custom domain-specific stopwords to exclude
 CUSTOM_STOPWORDS = {
     "genomes", "genome", "subtype", "year", "id", "summary", "bv-brc", "taxa", "bvbrc",
-    "describe","feature", "genes", "related", "find", "all"
+    "describe","feature", "genes", "related", "find", "all", "features", "country", "countries"
+}
+
+# Normalize plural/variant forms to canonical terms for consistent search
+REPLACE_WORDS = {
+    "proteins": "protein",
 }
 
 
@@ -138,6 +174,10 @@ def _tokenize_keywords(text: str) -> List[str]:
     # Decode URL-encoded query text so stopword filtering works for inputs like
     # "genome%20208964.12" and "genome+208964.12".
     text = unquote_plus(str(text))
+
+    # Apply word replacements (e.g. plural → singular) for consistent search
+    for old_word, new_word in REPLACE_WORDS.items():
+        text = re.sub(r"\b" + re.escape(old_word) + r"\b", new_word, text, flags=re.IGNORECASE)
 
     # Combine all stopwords
     all_stopwords = STOPWORDS | CUSTOM_STOPWORDS
@@ -254,7 +294,15 @@ def _build_rql_keyword_query(keywords: List[str]) -> str:
         normalized_keywords = []
     keyword_text = " ".join(str(term).strip() for term in normalized_keywords if str(term).strip())
     safe_keyword_text = keyword_text.replace(")", "\\)")
-    return f"keyword({safe_keyword_text})"
+    return_parts = []
+
+    for word in safe_keyword_text.split():
+        if any(char.isdigit() for char in word):
+            word = f'"{word}"'
+        return_parts.append(f"keyword({word})")
+
+    return_str = "and(" + ",".join(return_parts) + ")"
+    return return_str
 
 
 def _looks_like_patric_feature_id(value: str) -> bool:
@@ -271,14 +319,59 @@ def _escape_rql_value(value: str) -> str:
     return text.replace("\\", "\\\\").replace(",", "\\,").replace(")", "\\)")
 
 
-def _build_rql_replay_query(rql_query: str, limit: int = 100) -> str:
+def _apply_collection_solr_additions(collection: str, q_expr: str, **ctx) -> str:
+    """Apply collection-specific additions to the Solr q expression."""
+    if collection == "genome_feature":
+        return f"({q_expr}) AND patric_id:*"
+    return q_expr
+
+
+def _build_solr_select_options(collection: str) -> Dict[str, Any]:
+    """
+    Build options dict with select fields from config for the collection.
+    Returns {} or {"select": [field1, field2, ...]} with only allowed fields.
+    """
+    options: Dict[str, Any] = {}
+    select_fields = _get_select_fields_for_collection(collection)
+    if not select_fields:
+        return options
+    allowed = set(get_collection_fields(collection))
+    if allowed:
+        select_fields = [f for f in select_fields if f in allowed]
+    if select_fields:
+        options["select"] = select_fields
+    return options
+
+
+def _apply_collection_rql_additions(collection: str, rql_query: str, **ctx) -> str:
+    """Apply collection-specific additions to the RQL query."""
+    keywords = ctx.get("sanitized_keywords", [])
+    if collection == "genome_feature":
+        if len(keywords) == 1 and _looks_like_patric_feature_id(keywords[0]):
+            escaped_id = _escape_rql_value(keywords[0])
+            rql_query = f"and(eq(annotation,PATRIC),eq(patric_id,{escaped_id}))"
+        else:
+            rql_query = f"and(eq(annotation,PATRIC),{rql_query})"
+    return rql_query
+
+
+def _build_rql_replay_query(rql_query: str, collection: Optional[str] = None, limit: int = 100) -> str:
     """
     Build a URL-safe RQL replay string for BV-BRC links.
-    Encodes reserved characters in term values (e.g., '|' -> %7C)
-    while preserving RQL structural tokens.
+    Format: ?{query}&select(field1,field2,...) when config defines default fields.
     """
     encoded_rql = quote(str(rql_query or ""), safe="(),:*")
-    return f"?{encoded_rql}&limit({int(limit)})"
+    out = f"?{encoded_rql}"
+    if collection:
+        select_fields = _get_select_fields_for_collection(collection)
+        if select_fields:
+            allowed = set(get_collection_fields(collection))
+            if allowed:
+                select_fields = [f for f in select_fields if f in allowed]
+            if select_fields:
+                fields_str = ",".join(select_fields)
+                out = f"{out}&select({fields_str})"
+    return out
 
 
 def convert_json_to_tsv(results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -421,15 +514,11 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """Execute a structured single-collection query."""
-        options: Dict[str, Any] = {}
-        select_fields = normalize_select(select)
+        options = _build_solr_select_options(collection)
         sort_expr = normalize_sort(sort)
-        if select_fields:
-            options["select"] = select_fields
         if sort_expr:
             options["sort"] = sort_expr
 
-        # Validate filter fields against the collection's allowed fields.
         allowed_fields = set(get_collection_fields(collection))
         invalid_fields = validate_filter_fields(filters, allowed_fields) if filters else []
         if invalid_fields:
@@ -749,17 +838,9 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                     }
 
                 q_expr = str(search_info.get("q_expr", "")).strip() or "*:*"
-                if collection == "genome_feature":
-                    # Keep replayable RQL semantically aligned with Solr behavior for
-                    # canonical PATRIC feature IDs (fig|...peg...): exact field match.
-                    if len(sanitized_keywords) == 1 and _looks_like_patric_feature_id(sanitized_keywords[0]):
-                        escaped_id = _escape_rql_value(sanitized_keywords[0])
-                        rql_query = f"and(eq(annotation,PATRIC),eq(patric_id,{escaped_id}))"
-                    else:
-                        rql_query = f"and(eq(annotation,PATRIC),{rql_query})"
-                    q_expr = f"({q_expr}) AND patric_id:*"
-                # TODO: add support for more find/replace rules for rql_query
-                rql_replay_query = _build_rql_replay_query(rql_query, limit=100)
+                q_expr = _apply_collection_solr_additions(collection, q_expr, sanitized_keywords=sanitized_keywords)
+                rql_query = _apply_collection_rql_additions(collection, rql_query, sanitized_keywords=sanitized_keywords)
+                rql_replay_query = _build_rql_replay_query(rql_query, collection=collection, limit=100)
                 print(
                     "[bvbrc_search_data:rql_replay] "
                     f"collection='{collection}' "
@@ -768,12 +849,13 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                 )
 
                 headers = _build_auth_headers(token)
+                options = _build_solr_select_options(collection)
                 count_only = bool(count)
                 if count_only:
                     count_result = await query_direct(
                         core=collection,
                         filter_str=q_expr,
-                        options={},
+                        options=options,
                         base_url=_base_url,
                         headers=headers,
                         cursorId="*",
@@ -828,7 +910,7 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
                     page_result = await query_direct(
                         core=collection,
                         filter_str=q_expr,
-                        options={},
+                        options=options,
                         base_url=_base_url,
                         headers=headers,
                         cursorId=cursor,
