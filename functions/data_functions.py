@@ -452,6 +452,114 @@ def validate_filter_fields(expr: Any, allowed_fields: Set[str]) -> List[str]:
     return sorted(invalid)
 
 
+def sanitize_facet_fields(collection: str, facet_fields: List[str]) -> List[str]:
+    """
+    Validate facet field names against the collection schema.
+    Returns only fields that exist in the collection. Logs warnings for
+    any fields that were dropped.
+    """
+    if not facet_fields:
+        return []
+    allowed = set(get_collection_fields(collection))
+    if not allowed:
+        # If we can't load the schema, let the fields through rather than
+        # silently blocking all faceting.
+        print(f"[sanitize_facet_fields] No schema found for '{collection}', skipping validation")
+        return list(facet_fields)
+    valid = [f for f in facet_fields if f in allowed]
+    dropped = [f for f in facet_fields if f not in allowed]
+    if dropped:
+        print(f"[sanitize_facet_fields] Dropped invalid facet fields for '{collection}': {dropped}")
+    return valid
+
+
+async def query_faceted(
+    core: str,
+    filter_str: str,
+    facet_fields: List[str],
+    base_url: str = None,
+    headers: Dict[str, str] = None,
+    facet_limit: int = 100,
+    facet_mincount: int = 1,
+) -> Dict[str, Any]:
+    """
+    Execute a Solr facet query and return grouped counts.
+
+    Sends rows=0 (no documents) with facet=true and one or more facet.field
+    parameters.  Returns a dict with numFound and a facets mapping of
+    field -> [{value, count}, ...] sorted by count descending.
+    """
+    context_overrides: Dict[str, Any] = {"timeout": SOLR_QUERY_TIMEOUT}
+    if base_url:
+        context_overrides["base_url"] = base_url
+    if headers:
+        context_overrides["headers"] = headers
+
+    q_expr = filter_str if filter_str else "*:*"
+
+    # Build Solr params — no cursor, no doc fetching
+    params: Dict[str, Any] = {
+        "q": q_expr,
+        "rows": 0,
+        "wt": "json",
+        "facet": "true",
+        "facet.limit": facet_limit,
+        "facet.mincount": facet_mincount,
+    }
+    # Solr accepts multiple facet.field values; when sent as
+    # form-urlencoded the key is repeated.  httpx handles a list value
+    # by repeating the key automatically when using data= with a list
+    # of tuples, but since _prepare_request sends a plain dict we must
+    # handle the single-field case directly and use a list for multiple.
+    if len(facet_fields) == 1:
+        params["facet.field"] = facet_fields[0]
+    else:
+        params["facet.field"] = facet_fields
+
+    print(
+        f"[query_faceted] Solr facet request: core='{core}', "
+        f"q='{q_expr}', facet_fields={facet_fields}, "
+        f"facet_limit={facet_limit}, facet_mincount={facet_mincount}"
+    )
+
+    async with create_client(context_overrides) as client:
+        solr_base = (base_url or "https://www.bv-brc.org/api-bulk").rstrip("/")
+        result = await solr_select(
+            core,
+            params,
+            client=client._http_client,
+            base_url=solr_base,
+            headers=headers,
+            timeout=SOLR_QUERY_TIMEOUT,
+        )
+
+    # Parse the facet response
+    num_found = result.get("response", {}).get("numFound", 0)
+    raw_facet_fields = result.get("facet_counts", {}).get("facet_fields", {})
+
+    facets: Dict[str, List[Dict[str, Any]]] = {}
+    for field in facet_fields:
+        raw = raw_facet_fields.get(field, [])
+        # Solr returns a flat alternating list: [value, count, value, count, ...]
+        pairs = [
+            {"value": raw[i], "count": raw[i + 1]}
+            for i in range(0, len(raw), 2)
+        ]
+        facets[field] = pairs
+
+    bucket_counts = {f: len(v) for f, v in facets.items()}
+    print(
+        f"[query_faceted] Solr facet response: numFound={num_found}, "
+        f"fields={list(facets.keys())}, "
+        f"bucket_counts={bucket_counts}"
+    )
+
+    return {
+        "numFound": num_found,
+        "facets": facets,
+    }
+
+
 def _sanitize_query_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize and validate planner output into query_collection-compatible args."""
     if not isinstance(plan, dict):

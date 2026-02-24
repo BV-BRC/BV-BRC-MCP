@@ -85,6 +85,12 @@
             "genome": ["genome_id", "genome_name", "genus", "species", "strain", "genome_status"],
             "genome_feature": ["patric_id", "genome_id", "genome_name", "gene", "product", "start", "end", "accession", "feature_type", "length", "strand", "refseq_locus_tag"],
             "taxonomy": ["taxon_id", "genus", "species", "genome_count"]
+        },
+        "default_facet_by_collection": {
+            "genome": ["species", "genus", "genome_status", "host_name", "isolation_country"],
+            "genome_feature": ["product", "feature_type", "gene"],
+            "genome_amr": ["antibiotic", "resistant_phenotype", "evidence"],
+            "taxonomy": ["genus", "species"]
         }
     }
 }

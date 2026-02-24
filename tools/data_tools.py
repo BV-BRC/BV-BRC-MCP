@@ -17,6 +17,7 @@ from fastmcp import FastMCP, Context
 
 from functions.data_functions import (
     query_direct,
+    query_faceted,
     lookup_parameters,
     list_solr_collections,
     normalize_sort,
@@ -37,6 +38,7 @@ _token_provider = None
 _llm_client = None
 _download_cancel_tokens: Dict[str, bool] = {}
 _default_select_by_collection: Optional[Dict[str, List[str]]] = None
+_default_facet_by_collection: Optional[Dict[str, List[str]]] = None
 
 
 def _load_default_select_by_collection() -> Dict[str, List[str]]:
@@ -65,6 +67,36 @@ def _get_select_fields_for_collection(collection: str) -> Optional[List[str]]:
     Ignores LLM/user select; config is the sole source of truth.
     """
     defaults = _load_default_select_by_collection()
+    fields = defaults.get(collection)
+    return list(fields) if fields else None
+
+
+def _load_default_facet_by_collection() -> Dict[str, List[str]]:
+    """Load data.default_facet_by_collection from config.json. Cached on first call."""
+    global _default_facet_by_collection
+    if _default_facet_by_collection is not None:
+        return _default_facet_by_collection
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "config",
+        "config.json"
+    )
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        data_config = config.get("data") or {}
+        _default_facet_by_collection = dict(data_config.get("default_facet_by_collection") or {})
+    except Exception:
+        _default_facet_by_collection = {}
+    return _default_facet_by_collection
+
+
+def _get_facet_fields_for_collection(collection: str) -> Optional[List[str]]:
+    """
+    Return the configured default facet fields for a collection, or None if
+    faceting is not configured for this collection.
+    """
+    defaults = _load_default_facet_by_collection()
     fields = defaults.get(collection)
     return list(fields) if fields else None
 
@@ -154,7 +186,8 @@ STOPWORDS = {
 # Custom domain-specific stopwords to exclude
 CUSTOM_STOPWORDS = {
     "genomes", "genome", "subtype", "year", "id", "summary", "bv-brc", "taxa", "bvbrc",
-    "describe","feature", "genes", "related", "find", "all", "features", "country", "countries"
+    "describe","feature", "genes", "related", "find", "all", "features", "country", "countries",
+    "product", "description"
 }
 
 # Normalize plural/variant forms to canonical terms for consistent search
@@ -850,6 +883,74 @@ def register_data_tools(mcp: FastMCP, base_url: str, token_provider=None):
 
                 headers = _build_auth_headers(token)
                 options = _build_solr_select_options(collection)
+
+                # --- Count / faceting branch ---
+                # Use the existing deterministic regex to detect count intent,
+                # then return faceted counts using the configured fields for
+                # the selected collection.
+                count_query = _is_count_only_query(query_text)
+                if count_query:
+                    facet_fields = _get_facet_fields_for_collection(collection)
+                    if facet_fields:
+                        print(
+                            f"[bvbrc_search_data:facet] Executing facet query: "
+                            f"collection='{collection}', q='{q_expr}', "
+                            f"facet_fields={facet_fields}"
+                        )
+                        facet_result = await query_faceted(
+                            core=collection,
+                            filter_str=q_expr,
+                            facet_fields=facet_fields,
+                            base_url=_base_url,
+                            headers=headers,
+                        )
+                        # Convert facet buckets to a flat list of dicts for TSV
+                        facet_rows: List[Dict[str, Any]] = []
+                        for field, buckets in facet_result.get("facets", {}).items():
+                            for bucket in buckets:
+                                facet_rows.append({
+                                    "field": field,
+                                    "value": bucket["value"],
+                                    "count": bucket["count"],
+                                })
+                        conversion_result = convert_json_to_tsv(facet_rows)
+                        tsv = conversion_result.get("tsv", "") if "error" not in conversion_result else None
+                        result_payload: Dict[str, Any] = {
+                            "mode": "faceted",
+                            "collection": collection,
+                            "numFound": facet_result.get("numFound", 0),
+                            "facets": facet_result.get("facets", {}),
+                            "call": {
+                                "tool": "bvbrc_search_data",
+                                "backend_method": "data_functions.query_faceted",
+                                "replayable": True,
+                                "arguments_executed": {
+                                    "mode": "faceted",
+                                    "collection": collection,
+                                    "selection": selection,
+                                    "searchMode": search_info.get("searchMode"),
+                                    "keywords": sanitized_keywords,
+                                    "q": q_expr,
+                                    "facet_fields": facet_fields,
+                                    "data_api_base_url": _base_url,
+                                },
+                                "replay": {
+                                    "rql_query": rql_query,
+                                    "rql_replay_query": rql_replay_query,
+                                },
+                                "source": "bvbrc-mcp-data",
+                            },
+                        }
+                        if tsv is not None:
+                            result_payload["tsv"] = tsv
+                        return result_payload
+                    else:
+                        print(
+                            f"[bvbrc_search_data:count] Count query detected but no "
+                            f"default facet fields configured for '{collection}', "
+                            f"falling through to normal count"
+                        )
+
                 count_only = bool(count)
                 if count_only:
                     count_result = await query_direct(
