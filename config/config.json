@@ -82,7 +82,7 @@
     }, 
     "data": {
         "default_select_by_collection": {
-            "genome": ["genome_id", "genome_name", "genus", "species", "strain", "genome_status"],
+            "genome": ["genome_id", "genome_name", "genus", "species", "strain", "genome_status", "isolation_country"],
             "genome_feature": ["patric_id", "genome_id", "genome_name", "gene", "product", "start", "end", "accession", "feature_type", "length", "strand", "refseq_locus_tag"],
             "taxonomy": ["taxon_id", "genus", "species", "genome_count"]
         }
